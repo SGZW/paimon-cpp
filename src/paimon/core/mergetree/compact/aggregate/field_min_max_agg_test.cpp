@@ -1,0 +1,122 @@
+/*
+ * Copyright 2024-present Alibaba Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <utility>
+
+#include "arrow/type_fwd.h"
+#include "gtest/gtest.h"
+#include "paimon/common/data/data_define.h"
+#include "paimon/common/utils/decimal_utils.h"
+#include "paimon/core/mergetree/compact/aggregate/field_max_agg.h"
+#include "paimon/core/mergetree/compact/aggregate/field_min_agg.h"
+#include "paimon/data/decimal.h"
+#include "paimon/data/timestamp.h"
+#include "paimon/result.h"
+#include "paimon/status.h"
+#include "paimon/testing/utils/testharness.h"
+
+namespace arrow {
+class DataType;
+}  // namespace arrow
+
+namespace paimon::test {
+
+TEST(FieldMinMaxAggTest, TestSimple) {
+    {
+        ASSERT_OK_AND_ASSIGN(auto field_min_agg, FieldMinAgg::Create(arrow::int32()));
+        auto agg_ret = field_min_agg->Agg(5, 10);
+        ASSERT_EQ(DataDefine::GetVariantValue<int32_t>(agg_ret), 5);
+    }
+    {
+        ASSERT_OK_AND_ASSIGN(auto field_max_agg, FieldMaxAgg::Create(arrow::int32()));
+        auto agg_ret = field_max_agg->Agg(5, 10);
+        ASSERT_EQ(DataDefine::GetVariantValue<int32_t>(agg_ret), 10);
+    }
+}
+
+TEST(FieldMinMaxAggTest, TestInvalidType) {
+    auto field_min_agg = FieldMinAgg::Create(arrow::boolean());
+    ASSERT_FALSE(field_min_agg.ok());
+    auto field_max_agg = FieldMaxAgg::Create(arrow::boolean());
+    ASSERT_FALSE(field_max_agg.ok());
+}
+
+TEST(FieldMinMaxAggTest, TestNull) {
+    ASSERT_OK_AND_ASSIGN(auto field_min_agg, FieldMinAgg::Create(arrow::int32()));
+    ASSERT_OK_AND_ASSIGN(auto field_max_agg, FieldMaxAgg::Create(arrow::int32()));
+    {
+        auto agg_ret = field_min_agg->Agg(5, NullType());
+        ASSERT_EQ(DataDefine::GetVariantValue<int32_t>(agg_ret), 5);
+        agg_ret = field_max_agg->Agg(5, NullType());
+        ASSERT_EQ(DataDefine::GetVariantValue<int32_t>(agg_ret), 5);
+    }
+    {
+        auto agg_ret = field_min_agg->Agg(NullType(), 10);
+        ASSERT_EQ(DataDefine::GetVariantValue<int32_t>(agg_ret), 10);
+        agg_ret = field_max_agg->Agg(NullType(), 10);
+        ASSERT_EQ(DataDefine::GetVariantValue<int32_t>(agg_ret), 10);
+    }
+    {
+        auto agg_ret = field_min_agg->Agg(NullType(), NullType());
+        ASSERT_TRUE(DataDefine::IsVariantNull(agg_ret));
+        agg_ret = field_max_agg->Agg(NullType(), NullType());
+        ASSERT_TRUE(DataDefine::IsVariantNull(agg_ret));
+    }
+}
+
+TEST(FieldMinMaxAggTest, TestVariantType) {
+    auto CheckResult = [](const std::shared_ptr<arrow::DataType>& type, const VariantType& large,
+                          const VariantType& small) {
+        ASSERT_OK_AND_ASSIGN(auto field_min_agg, FieldMinAgg::Create(type));
+        ASSERT_OK_AND_ASSIGN(auto field_max_agg, FieldMaxAgg::Create(type));
+        auto agg_ret = field_min_agg->Agg(small, large);
+        ASSERT_EQ(agg_ret, small);
+        agg_ret = field_min_agg->Agg(large, small);
+        ASSERT_EQ(agg_ret, small);
+
+        agg_ret = field_max_agg->Agg(small, large);
+        ASSERT_EQ(agg_ret, large);
+        agg_ret = field_max_agg->Agg(large, small);
+        ASSERT_EQ(agg_ret, large);
+    };
+
+    CheckResult(arrow::int8(), static_cast<char>(100), static_cast<char>(15));
+    CheckResult(arrow::int16(), static_cast<int16_t>(100), static_cast<int16_t>(15));
+    CheckResult(arrow::int32(), static_cast<int32_t>(100), static_cast<int32_t>(15));
+    CheckResult(arrow::date32(), static_cast<int32_t>(100), static_cast<int32_t>(15));
+    CheckResult(arrow::int64(), static_cast<int64_t>(100), static_cast<int64_t>(15));
+    CheckResult(arrow::float32(), static_cast<float>(100.2), static_cast<float>(15.1));
+    CheckResult(arrow::float64(), 100.23, 15.11);
+    CheckResult(arrow::timestamp(arrow::TimeUnit::NANO),
+                Timestamp(/*millisecond=*/100, /*nano_of_millisecond=*/999),
+                Timestamp(/*millisecond=*/10, /*nano_of_millisecond=*/999));
+    CheckResult(arrow::decimal128(30, 20),
+                Decimal(/*precision=*/30, /*scale=*/20,
+                        DecimalUtils::StrToInt128("12345678998765432145678").value()),
+                Decimal(/*precision=*/30, /*scale=*/20,
+                        DecimalUtils::StrToInt128("2345679987639475677478").value()));
+    std::string str1 = "bcd";
+    std::string str2 = "abc";
+    CheckResult(arrow::utf8(), std::string_view(str1.data(), str1.size()),
+                std::string_view(str2.data(), str2.size()));
+    CheckResult(arrow::binary(), std::string_view(str1.data(), str1.size()),
+                std::string_view(str2.data(), str2.size()));
+}
+}  // namespace paimon::test
