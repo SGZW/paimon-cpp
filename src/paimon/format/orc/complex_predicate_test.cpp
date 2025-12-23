@@ -15,11 +15,9 @@
  */
 
 #include <cstdint>
-#include <iostream>
 #include <map>
 #include <memory>
 #include <optional>
-#include <ostream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -51,7 +49,6 @@
 #include "paimon/status.h"
 #include "paimon/testing/utils/read_result_collector.h"
 #include "paimon/testing/utils/testharness.h"
-#include "paimon/testing/utils/timezone_guard.h"
 #include "paimon/utils/roaring_bitmap32.h"
 
 namespace paimon {
@@ -133,7 +130,7 @@ TEST_F(ComplexPredicateTest, TestSimple) {
         arrow_vendored::date::current_zone()->name() == "PRC") {
         // refer: https://github.com/eggert/tz/blob/main/asia#L653
         // When using the Asia/Shanghai timezone, timestamps prior to 1901 have an additional offset
-        // of 5 minutes and 45 seconds
+        // of 5 minutes and 43 seconds
         expected_array = std::dynamic_pointer_cast<arrow::StructArray>(
             arrow::ipc::internal::json::ArrayFromJSON(arrow::struct_({fields}), R"([
             [10, 1, 1234,  "2033-05-18 03:33:20.0",         "123456789987654321.45678"],

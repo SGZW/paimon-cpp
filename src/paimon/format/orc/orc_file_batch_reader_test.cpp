@@ -504,7 +504,7 @@ TEST_P(OrcFileBatchReaderTest, TestComplexType) {
         arrow_vendored::date::current_zone()->name() == "PRC") {
         // refer: https://github.com/eggert/tz/blob/main/asia#L653
         // When using the Asia/Shanghai timezone, timestamps prior to 1901 have an additional offset
-        // of 5 minutes and 45 seconds
+        // of 5 minutes and 43 seconds
         array_status = arrow::ipc::internal::json::ChunkedArrayFromJSON(arrow_data_type, {R"([
         [10, 1, 1234,  "2033-05-18 03:33:20.0",         "123456789987654321.45678", "add"],
         [10, 1, 19909, "2033-05-18 03:33:20.000001001", "12.30000", "cat"],
