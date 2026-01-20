@@ -179,7 +179,7 @@ class ReadInteTest : public testing::Test, public ::testing::WithParamInterface<
         EXPECT_OK_AND_ASSIGN(auto input_stream, file_system->Open(split_file_name));
         std::vector<char> split_bytes(input_stream->Length().value_or(0), 0);
         EXPECT_OK_AND_ASSIGN([[maybe_unused]] int32_t read_len,
-                             input_stream->Read(split_bytes.data(), split_bytes.size()));
+                             input_stream -> Read(split_bytes.data(), split_bytes.size()));
         EXPECT_OK(input_stream->Close());
 
         EXPECT_OK_AND_ASSIGN(auto split,
@@ -630,9 +630,9 @@ TEST_P(ReadInteTest, TestAppendReadWithComplexTypePredicate) {
     std::vector<std::string> file_list_1;
     std::vector<std::string> file_list_2;
     if (param.file_format == "orc") {
-        file_list_0 = {"data-05b19a2d-18d8-4620-b8ab-cd8f862d96d1-0.orc"};
-        file_list_1 = {"data-d336eb91-df17-4932-8206-4199579a2cbd-0.orc"};
-        file_list_2 = {"data-b35d2ec8-b4a5-4c23-9652-bd8d9fabdee0-0.orc"};
+        file_list_0 = {"data-14a30421-7650-486c-9876-66a1fa4356ff-0.orc"};
+        file_list_1 = {"data-d39c4ccc-6245-460c-bd70-632bd2b26234-0.orc"};
+        file_list_2 = {"data-b20718c4-b2e1-4928-b563-11539edc9572-0.orc"};
     } else if (param.file_format == "parquet") {
         file_list_0 = {"data-f8754699-0c43-4e53-be00-7e8af1754913-0.parquet"};
         file_list_1 = {"data-ac0894ca-fc13-49c8-bb22-4556c8ee416c-0.parquet"};
@@ -668,7 +668,7 @@ TEST_P(ReadInteTest, TestAppendReadWithComplexTypePredicate) {
                                                                          &expected_array);
     ASSERT_TRUE(array_status.ok());
     ASSERT_TRUE(result_array);
-    ASSERT_TRUE(result_array->Equals(*expected_array));
+    ASSERT_TRUE(result_array->Equals(*expected_array)) << result_array->ToString();
 }
 
 TEST_P(ReadInteTest, TestAppendReadWithPredicateOnlyPushdown) {
@@ -2251,6 +2251,145 @@ TEST_P(ReadInteTest, TestReadWithAppendPtBranch) {
     check_result(std::nullopt);
     // when read with rt branch, specific table schema takes no effective
     check_result("no use schema");
+}
+
+TEST_P(ReadInteTest, TestSpecificFs) {
+    class CountableInputStream : public InputStream {
+     public:
+        CountableInputStream(const std::shared_ptr<InputStream>& input, size_t* io_count)
+            : input_(input), io_count_(io_count) {}
+        ~CountableInputStream() override = default;
+
+        Status Seek(int64_t offset, SeekOrigin origin) override {
+            return input_->Seek(offset, origin);
+        }
+        Result<int64_t> GetPos() const override {
+            return input_->GetPos();
+        }
+        Result<int32_t> Read(char* buffer, uint32_t size) override {
+            (*io_count_)++;
+            return input_->Read(buffer, size);
+        }
+        Result<int32_t> Read(char* buffer, uint32_t size, uint64_t offset) override {
+            (*io_count_)++;
+            return input_->Read(buffer, size, offset);
+        }
+        void ReadAsync(char* buffer, uint32_t size, uint64_t offset,
+                       std::function<void(Status)>&& callback) override {
+            (*io_count_)++;
+            return input_->ReadAsync(buffer, size, offset, std::move(callback));
+        }
+
+        Status Close() override {
+            return input_->Close();
+        }
+        Result<std::string> GetUri() const override {
+            return input_->GetUri();
+        }
+        Result<uint64_t> Length() const override {
+            return input_->Length();
+        }
+
+        std::shared_ptr<InputStream> input_;
+        size_t* io_count_;
+    };
+
+    class CountableFileSystem : public FileSystem {
+     public:
+        CountableFileSystem(const std::shared_ptr<FileSystem>& fs, size_t* io_count)
+            : fs_(fs), io_count_(io_count) {}
+        ~CountableFileSystem() override = default;
+
+        Result<std::unique_ptr<InputStream>> Open(const std::string& path) const override {
+            PAIMON_ASSIGN_OR_RAISE(std::shared_ptr<InputStream> input, fs_->Open(path));
+            return std::make_unique<CountableInputStream>(input, io_count_);
+        }
+        Result<std::unique_ptr<OutputStream>> Create(const std::string& path,
+                                                     bool overwrite) const override {
+            return Status::Invalid("Not Implemented for CountableFileSystem");
+        }
+        Status Mkdirs(const std::string& path) const override {
+            return fs_->Mkdirs(path);
+        }
+        Status Rename(const std::string& src, const std::string& dst) const override {
+            return fs_->Rename(src, dst);
+        }
+        Status Delete(const std::string& path, bool recursive = true) const override {
+            return fs_->Delete(path, recursive);
+        }
+        Result<std::unique_ptr<FileStatus>> GetFileStatus(const std::string& path) const override {
+            return fs_->GetFileStatus(path);
+        }
+        Status ListDir(const std::string& directory,
+                       std::vector<std::unique_ptr<BasicFileStatus>>* status_list) const override {
+            return fs_->ListDir(directory, status_list);
+        }
+        Status ListFileStatus(
+            const std::string& path,
+            std::vector<std::unique_ptr<FileStatus>>* status_list) const override {
+            return fs_->ListFileStatus(path, status_list);
+        }
+        Result<bool> Exists(const std::string& path) const override {
+            return fs_->Exists(path);
+        }
+
+        std::shared_ptr<FileSystem> fs_;
+        size_t* io_count_;
+    };
+
+    size_t io_count = 0;
+    auto param = GetParam();
+    std::string path =
+        paimon::test::GetDataDir() + "/" + param.file_format + "/append_09.db/append_09";
+    std::vector<DataField> read_fields = {DataField(0, arrow::field("f0", arrow::utf8())),
+                                          DataField(1, arrow::field("f1", arrow::int32())),
+                                          DataField(2, arrow::field("f2", arrow::int32())),
+                                          DataField(3, arrow::field("f3", arrow::float64()))};
+
+    auto countable_fs =
+        std::make_shared<CountableFileSystem>(std::make_shared<LocalFileSystem>(), &io_count);
+    ReadContextBuilder context_builder(path);
+    context_builder.AddOption(Options::FILE_FORMAT, param.file_format);
+    context_builder.EnablePrefetch(param.enable_prefetch)
+        .AddOption("test.enable-adaptive-prefetch-strategy", "false")
+        .AddOption("orc.read.enable-metrics", "true")
+        .WithFileSystem(countable_fs);
+    ASSERT_OK_AND_ASSIGN(auto read_context, context_builder.Finish());
+    ASSERT_OK_AND_ASSIGN(auto table_read, TableRead::Create(std::move(read_context)));
+
+    std::vector<std::string> file_list;
+    if (param.file_format == "orc") {
+        file_list = {"data-db2b44c0-0d73-449d-82a0-4075bd2cb6e3-0.orc",
+                     "data-b913a160-a4d1-4084-af2a-18333c35668e-0.orc"};
+    } else if (param.file_format == "parquet") {
+        file_list = {"data-b446f78a-2cfb-4b3b-add8-31295d24a277-0.parquet",
+                     "data-fd72a479-53ae-42f7-aec0-e982ee555928-0.parquet"};
+    }
+    DataSplitsSimple input_data_splits = {{paimon::test::GetDataDir() + "/" + param.file_format +
+                                               "/append_09.db/append_09/f1=20/"
+                                               "bucket-0",
+                                           BinaryRowGenerator::GenerateRow({20}, pool_.get()),
+                                           file_list}};
+
+    auto data_splits = CreateDataSplits(input_data_splits, /*snapshot_id=*/3);
+    ASSERT_EQ(data_splits.size(), 1);
+    ASSERT_OK_AND_ASSIGN(auto batch_reader, table_read->CreateReader(data_splits));
+    ASSERT_OK_AND_ASSIGN(auto result_array, ReadResultCollector::CollectResult(batch_reader.get()));
+
+    auto fields_with_row_kind = read_fields;
+    fields_with_row_kind.insert(fields_with_row_kind.begin(), SpecialFields::ValueKind());
+    std::shared_ptr<arrow::DataType> arrow_data_type =
+        DataField::ConvertDataFieldsToArrowStructType(fields_with_row_kind);
+
+    std::shared_ptr<arrow::ChunkedArray> expected_array;
+    auto array_status = arrow::ipc::internal::json::ChunkedArrayFromJSON(arrow_data_type, {R"([
+      [0, "Lucy", 20, 1, 14.1],
+      [0, "Paul", 20, 1, null]
+    ])"},
+                                                                         &expected_array);
+    ASSERT_TRUE(array_status.ok());
+    ASSERT_TRUE(result_array->Equals(expected_array));
+    ASSERT_GT(io_count, 0);
 }
 
 }  // namespace paimon::test
