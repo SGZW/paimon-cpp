@@ -95,15 +95,6 @@ Result<std::unique_ptr<MergeFileSplitRead>> MergeFileSplitRead::Create(
     PAIMON_RETURN_NOT_OK(GenerateKeyValueReadSchema(
         *table_schema, core_options, context->GetReadSchema(), &value_schema, &read_schema,
         &key_comparator, &interval_partition_comparator, &user_defined_seq_comparator));
-    PAIMON_ASSIGN_OR_RAISE(std::unique_ptr<MergeFunction> merge_function,
-                           PrimaryKeyTableUtils::CreateMergeFunction(
-                               value_schema, table_schema->PrimaryKeys(), core_options));
-    if (core_options.NeedLookup() && core_options.GetMergeEngine() != MergeEngine::FIRST_ROW) {
-        // don't wrap first row, it is already OK
-        merge_function = std::make_unique<LookupMergeFunction>(std::move(merge_function));
-    }
-    auto merge_function_wrapper =
-        std::make_shared<ReducerMergeFunctionWrapper>(std::move(merge_function));
 
     PAIMON_ASSIGN_OR_RAISE(std::shared_ptr<Predicate> predicate_for_keys,
                            GenerateKeyPredicates(context->GetPredicate(), *table_schema));
@@ -120,7 +111,7 @@ Result<std::unique_ptr<MergeFileSplitRead>> MergeFileSplitRead::Create(
         path_factory, context,
         std::make_unique<SchemaManager>(core_options.GetFileSystem(), context->GetPath(),
                                         context->GetCoreOptions().GetBranch()),
-        key_arity, value_schema, read_schema, projection, merge_function_wrapper, key_comparator,
+        key_arity, value_schema, read_schema, projection, key_comparator,
         interval_partition_comparator, user_defined_seq_comparator, predicate_for_keys, memory_pool,
         executor));
 }
@@ -144,9 +135,32 @@ Result<std::unique_ptr<BatchReader>> MergeFileSplitRead::CreateReader(
             CreateNoMergeReader(data_split, /*only_filter_key=*/data_split->IsStreaming(),
                                 data_file_path_factory));
     } else {
+        if (!merge_function_wrapper_) {
+            // In deletion vector mode, streaming data split or postpone bucket mode, we don't need
+            // to use merge function. Even if the merge function in CoreOptions is not supported, it
+            // should not affect data reading. So we create merge_function_wrapper_ lazily, to avoid
+            // raise errors when creating MergeFileSplitRead at the beginning.
+            PAIMON_ASSIGN_OR_RAISE(
+                merge_function_wrapper_,
+                CreateMergeFunctionWrapper(options_, context_->GetTableSchema(), value_schema_));
+        }
         PAIMON_ASSIGN_OR_RAISE(batch_reader, CreateMergeReader(data_split, data_file_path_factory));
     }
     return std::make_unique<CompleteRowKindBatchReader>(std::move(batch_reader), pool_);
+}
+
+Result<std::shared_ptr<MergeFunctionWrapper<KeyValue>>>
+MergeFileSplitRead::CreateMergeFunctionWrapper(const CoreOptions& core_options,
+                                               const std::shared_ptr<TableSchema>& table_schema,
+                                               const std::shared_ptr<arrow::Schema>& value_schema) {
+    PAIMON_ASSIGN_OR_RAISE(std::unique_ptr<MergeFunction> merge_function,
+                           PrimaryKeyTableUtils::CreateMergeFunction(
+                               value_schema, table_schema->PrimaryKeys(), core_options));
+    if (core_options.NeedLookup() && core_options.GetMergeEngine() != MergeEngine::FIRST_ROW) {
+        // don't wrap first row, it is already OK
+        merge_function = std::make_unique<LookupMergeFunction>(std::move(merge_function));
+    }
+    return std::make_shared<ReducerMergeFunctionWrapper>(std::move(merge_function));
 }
 
 Result<std::unique_ptr<BatchReader>> MergeFileSplitRead::ApplyIndexAndDvReaderIfNeeded(
@@ -223,7 +237,6 @@ MergeFileSplitRead::MergeFileSplitRead(
     std::unique_ptr<SchemaManager>&& schema_manager, int32_t key_arity,
     const std::shared_ptr<arrow::Schema>& value_schema,
     const std::shared_ptr<arrow::Schema>& read_schema, const std::vector<int32_t>& projection,
-    const std::shared_ptr<MergeFunctionWrapper<KeyValue>>& merge_function_wrapper,
     const std::shared_ptr<FieldsComparator>& key_comparator,
     const std::shared_ptr<FieldsComparator>& interval_partition_comparator,
     const std::shared_ptr<FieldsComparator>& user_defined_seq_comparator,
@@ -234,7 +247,6 @@ MergeFileSplitRead::MergeFileSplitRead(
       value_schema_(value_schema),
       read_schema_(read_schema),
       projection_(projection),
-      merge_function_wrapper_(merge_function_wrapper),
       key_comparator_(key_comparator),
       interval_partition_comparator_(interval_partition_comparator),
       user_defined_seq_comparator_(user_defined_seq_comparator),
@@ -247,15 +259,11 @@ Status MergeFileSplitRead::GenerateKeyValueReadSchema(
     std::shared_ptr<FieldsComparator>* key_comparator,
     std::shared_ptr<FieldsComparator>* interval_partition_comparator,
     std::shared_ptr<FieldsComparator>* sequence_fields_comparator) {
-    std::vector<DataField> key_fields;
-    std::vector<DataField> non_key_fields;
-    // 1. split user raw read schema to key and non-key fields
-    PAIMON_ASSIGN_OR_RAISE(std::vector<std::string> trimmed_key_fields,
-                           table_schema.TrimmedPrimaryKeys());
-    PAIMON_RETURN_NOT_OK(
-        SplitKeyAndNonKeyField(trimmed_key_fields, raw_read_schema, &key_fields, &non_key_fields));
-    // 2. add user defined sequence field in non-key fields
-    PAIMON_RETURN_NOT_OK(CompleteSequenceField(table_schema, options, &non_key_fields));
+    // 1. add user raw read schema to need_fields
+    PAIMON_ASSIGN_OR_RAISE(std::vector<DataField> need_fields,
+                           DataField::ConvertArrowSchemaToDataFields(raw_read_schema));
+    // 2. add user defined sequence field to need_fields
+    PAIMON_RETURN_NOT_OK(CompleteSequenceField(table_schema, options, &need_fields));
     if (options.GetMergeEngine() == MergeEngine::PARTIAL_UPDATE) {
         // add sequence group fields for partial update
         std::map<std::string, std::vector<std::string>> value_field_to_seq_group_field;
@@ -263,18 +271,26 @@ Status MergeFileSplitRead::GenerateKeyValueReadSchema(
         PAIMON_RETURN_NOT_OK(PartialUpdateMergeFunction::ParseSequenceGroupFields(
             options, &value_field_to_seq_group_field, &seq_group_key_set));
         PAIMON_RETURN_NOT_OK(PartialUpdateMergeFunction::CompleteSequenceGroupFields(
-            table_schema, value_field_to_seq_group_field, &non_key_fields));
+            table_schema, value_field_to_seq_group_field, &need_fields));
     }
-    // 3. construct value fields: key fields are put before non-key fields
+    // 3. split need_fields to key and non-key fields
+    std::vector<DataField> key_fields;
+    std::vector<DataField> non_key_fields;
+    PAIMON_ASSIGN_OR_RAISE(std::vector<std::string> trimmed_key_fields,
+                           table_schema.TrimmedPrimaryKeys());
+    PAIMON_RETURN_NOT_OK(
+        SplitKeyAndNonKeyField(trimmed_key_fields, need_fields, &key_fields, &non_key_fields));
+
+    // 4. construct value fields: key fields are put before non-key fields
     std::vector<DataField> value_fields;
     value_fields.insert(value_fields.end(), key_fields.begin(), key_fields.end());
     value_fields.insert(value_fields.end(), non_key_fields.begin(), non_key_fields.end());
     *value_schema = DataField::ConvertDataFieldsToArrowSchema(value_fields);
-    // 4. create sequence field comparator
+    // 5. create sequence field comparator
     PAIMON_ASSIGN_OR_RAISE(
         *sequence_fields_comparator,
         PrimaryKeyTableUtils::CreateSequenceFieldsComparator(value_fields, options));
-    // 5. complete key fields to all trimmed primary key
+    // 6. complete key fields to all trimmed primary key
     key_fields.clear();
     PAIMON_ASSIGN_OR_RAISE(key_fields, table_schema.GetFields(trimmed_key_fields));
     PAIMON_ASSIGN_OR_RAISE(
@@ -285,7 +301,7 @@ Status MergeFileSplitRead::GenerateKeyValueReadSchema(
         *interval_partition_comparator,
         FieldsComparator::Create(key_fields,
                                  /*is_ascending_order=*/true, /*use_view=*/false));
-    // 6. construct actual read fields: special + key + non-key value
+    // 7. construct actual read fields: special + key + non-key value
     std::vector<DataField> read_fields;
     std::vector<DataField> special_fields(
         {SpecialFields::SequenceNumber(), SpecialFields::ValueKind()});
@@ -297,11 +313,8 @@ Status MergeFileSplitRead::GenerateKeyValueReadSchema(
 }
 
 Status MergeFileSplitRead::SplitKeyAndNonKeyField(
-    const std::vector<std::string>& trimmed_key_fields,
-    const std::shared_ptr<arrow::Schema>& raw_read_schema, std::vector<DataField>* key_fields,
-    std::vector<DataField>* non_key_fields) {
-    PAIMON_ASSIGN_OR_RAISE(std::vector<DataField> read_fields,
-                           DataField::ConvertArrowSchemaToDataFields(raw_read_schema));
+    const std::vector<std::string>& trimmed_key_fields, const std::vector<DataField>& read_fields,
+    std::vector<DataField>* key_fields, std::vector<DataField>* non_key_fields) {
     for (const auto& field : read_fields) {
         auto iter = std::find(trimmed_key_fields.begin(), trimmed_key_fields.end(), field.Name());
         if (iter == trimmed_key_fields.end()) {

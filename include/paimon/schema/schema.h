@@ -39,12 +39,19 @@ class PAIMON_EXPORT Schema {
     /// @return A result containing an ArrowSchema, or an error status if conversion fails.
     virtual Result<std::unique_ptr<::ArrowSchema>> GetArrowSchema() const = 0;
 
+    /// Get the JSON schema representation of this table schema.
+    ///
+    /// This method provides a JSON string that represents the complete schema information.
+    ///
+    /// @return A string containing the JSON schema, or an error status on failure.
+    virtual Result<std::string> GetJsonSchema() const = 0;
+
     /// Get the names of all fields in the table schema.
     /// @return A vector of field names.
     virtual std::vector<std::string> FieldNames() const = 0;
 
     /// Get the unique identifier of this table schema.
-    /// @return The schema ID
+    /// @return The schema id
     virtual int64_t Id() const = 0;
 
     /// Get the list of primary key field names.
@@ -65,8 +72,8 @@ class PAIMON_EXPORT Schema {
     /// @return The number of buckets.
     virtual int32_t NumBuckets() const = 0;
 
-    /// Get the highest field ID assigned in this schema.
-    /// @return The maximum field ID.
+    /// Get the highest field id assigned in this schema.
+    /// @return The maximum field id.
     virtual int32_t HighestFieldId() const = 0;
 
     /// Get the table-level options associated with this schema.

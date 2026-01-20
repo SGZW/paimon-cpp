@@ -38,7 +38,7 @@ class LuminaFileWriter : public ::lumina::io::FileWriter {
         return ::lumina::core::Result<uint64_t>::Ok(static_cast<uint64_t>(pos_result.value()));
     }
 
-    ::lumina::core::Status Write(const char* data, uint64_t size) override {
+    ::lumina::core::Status Write(const char* data, uint64_t size) noexcept override {
         uint64_t total_write_size = 0;
         while (total_write_size < size) {
             uint64_t current_write_size = std::min(size - total_write_size, max_write_size_);
@@ -48,7 +48,7 @@ class LuminaFileWriter : public ::lumina::io::FileWriter {
                 return PaimonToLuminaStatus(write_result.status());
             }
             if (static_cast<uint64_t>(write_result.value()) != current_write_size) {
-                return ::lumina::core::Status::Error(
+                return ::lumina::core::Status(
                     ::lumina::core::ErrorCode::IoError,
                     fmt::format("expect write len {} mismatch actual write len {}",
                                 current_write_size, write_result.value()));
@@ -58,7 +58,7 @@ class LuminaFileWriter : public ::lumina::io::FileWriter {
         return ::lumina::core::Status::Ok();
     }
 
-    ::lumina::core::Status Close() override {
+    ::lumina::core::Status Close() noexcept override {
         auto status = out_->Flush();
         if (!status.ok()) {
             return PaimonToLuminaStatus(status);

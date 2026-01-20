@@ -95,15 +95,26 @@ class PAIMON_EXPORT Catalog {
     /// status.
     virtual Result<std::vector<std::string>> ListTables(const std::string& db_name) const = 0;
 
+    /// Checks whether a database with the specified name exists in the catalog.
+    ///
+    /// @param db_name The name of the database to check for existence.
+    /// @return A result containing true if the database exists, false otherwise, or an error
+    /// status.
+    virtual Result<bool> DatabaseExists(const std::string& db_name) const = 0;
+
+    /// Checks whether a table with the specified identifier exists in the catalog.
+    ///
+    /// @param identifier The identifier of the table to check for existence.
+    /// @return A result containing true if the table exists, false otherwise, or an error status.
+    virtual Result<bool> TableExists(const Identifier& identifier) const = 0;
+
     /// Loads the latest schema of a specified table.
     ///
     /// @note System tables will not be supported.
     ///
     /// @param identifier The identifier (database and table name) of the table to load.
-    /// @return A result containing table schema if the table exists, or std::nullopt if it
-    /// doesn't, or an error status on failure.
-    virtual Result<std::optional<std::shared_ptr<Schema>>> LoadTableSchema(
-        const Identifier& identifier) const = 0;
+    /// @return A result containing table schema if the table exists, or an error status on failure.
+    virtual Result<std::shared_ptr<Schema>> LoadTableSchema(const Identifier& identifier) const = 0;
 };
 
 }  // namespace paimon

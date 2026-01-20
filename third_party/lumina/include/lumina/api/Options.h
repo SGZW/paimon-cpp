@@ -19,29 +19,20 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <lumina/core/Result.h>
+#include <lumina/core/Status.h>
+#include <lumina/mpl/Concepts.h>
+#include <lumina/telemetry/Log.h>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <variant>
 
-#include "lumina/core/Result.h"
-#include "lumina/core/Status.h"
-#include "lumina/mpl/Concepts.h"
-#include "lumina/telemetry/Log.h"
-
 namespace lumina::api {
-
-
-template <class T>
-struct OptionKey {
-    const char* name;
-    constexpr explicit OptionKey(const char* n) : name(n) {}
-    constexpr std::string_view str() const { return name; }
-    using value_type = T;
-};
 
 enum class OptionsType {
     Search,
@@ -55,12 +46,13 @@ template <OptionsType T>
 class Options
 {
 public:
-    Options() = default;
-    ~Options() = default;
+    Options() noexcept = default;
+    ~Options() noexcept = default;
 
     using Value = std::variant<int64_t, double, bool, std::string>;
     using Map = std::unordered_map<std::string, Value>;
 
+    // -- Set: fluent API --
     template <typename K, typename V>
     std::enable_if_t<lumina::mpl::Stringable<K>, Options&> Set(K&& key, V&& v)
     {
@@ -71,13 +63,6 @@ public:
         } else {
             static_assert(std::is_same_v<void, std::void_t<K>> && false);
         }
-        return *this;
-    }
-
-    template <class V>
-    Options& Set(const OptionKey<V>& key, V&& v)
-    {
-        _values[std::string(key.str())] = Value(std::forward<V>(v));
         return *this;
     }
 
@@ -96,41 +81,27 @@ public:
         auto v = Get<bool>(key);
         return v ? *v : def;
     }
-    std::string GetString(std::string_view key, std::string def) const
+    std::string GetString(std::string_view key, std::string def) const noexcept
     {
         auto v = Get<std::string>(key);
         return v ? *v : std::move(def);
     }
 
-    bool Has(std::string_view key) const { return _values.find(std::string(key)) != _values.end(); }
-
     template <class V>
-    bool Has(const OptionKey<V>& key) const
+    bool HasValueOfType(std::string_view key) const noexcept
     {
-        return Has(key.str());
-    }
-
-    core::Status HasAll(std::initializer_list<std::string_view> keys) const
-    {
-        return HasAll(std::vector<std::string_view>(keys.begin(), keys.end()));
-    }
-
-    core::Status HasAll(std::vector<std::string_view> keys) const
-    {
-        std::string errorMsg;
-        for (auto key : keys) {
-            if (!Has(key)) {
-                errorMsg += std::string(" lack key: ") + std::string(key);
-            }
+        auto it = _values.find(std::string(key));
+        if (it == _values.end()) {
+            return false;
         }
-        if (!errorMsg.empty()) {
-            return core::Status(core::ErrorCode::InvalidArgument, errorMsg);
+        if (auto p = std::get_if<V>(&it->second)) {
+            return true;
         }
-        return core::Status::Ok();
+        return false;
     }
 
     template <OptionsType V>
-    Options& MergeFrom(const Options<V>& other)
+    Options& MergeFrom(const Options<V>& other) noexcept
     {
         for (const auto& kv : other._values) {
             _values.emplace(kv.first, kv.second);
@@ -139,7 +110,7 @@ public:
     }
 
     template <OptionsType V = T>
-    Options<V> Derive(std::string_view keyPrefix) const
+    Options<V> Derive(std::string_view keyPrefix) const noexcept
     {
         Options<V> options;
         for (const auto& kv : _values) {
@@ -150,9 +121,11 @@ public:
         return options;
     }
 
+    // Direct access to all key/value pairs (read-only)
     const Map& Values() const noexcept { return _values; }
 
-    std::string DebugString() const
+    // Debug string representation of all options
+    std::string DebugString() const noexcept
     {
         std::ostringstream oss;
         oss << "{";
@@ -182,24 +155,6 @@ public:
         return oss.str();
     }
 
-    template <class V>
-    V Get(const OptionKey<V>& key, V def) const
-    {
-        auto v = Get<V>(key.str());
-        return v ? *v : def;
-    }
-
-    template <class V>
-    core::Result<V> Require(const OptionKey<V>& key) const
-    {
-        auto v = Get<V>(key.str());
-        if (!v) {
-            return core::Result<V>::Err(core::Status(core::ErrorCode::InvalidArgument,
-                                                     "Option missing or type mismatch: " + std::string(key.str())));
-        }
-        return core::Result<V>::Ok(*v);
-    }
-
 private:
     template <class V>
     std::optional<V> Get(std::string_view key) const
@@ -226,4 +181,4 @@ using BuilderOptions = Options<OptionsType::Builder>;
 using QuantizerOptions = Options<OptionsType::Quantizer>;
 using IOOptions = Options<OptionsType::IO>;
 
-}
+} // namespace lumina::api

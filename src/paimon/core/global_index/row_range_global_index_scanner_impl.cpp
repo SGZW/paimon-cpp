@@ -22,6 +22,8 @@
 #include <vector>
 
 #include "arrow/c/bridge.h"
+#include "arrow/c/helpers.h"
+#include "paimon/common/utils/scope_guard.h"
 #include "paimon/core/global_index/global_index_evaluator_impl.h"
 #include "paimon/global_index/global_indexer.h"
 #include "paimon/global_index/global_indexer_factory.h"
@@ -65,8 +67,19 @@ Result<std::shared_ptr<GlobalIndexReader>> RowRangeGlobalIndexScannerImpl::Creat
 }
 
 Result<std::vector<std::shared_ptr<GlobalIndexReader>>>
+RowRangeGlobalIndexScannerImpl::CreateReaders(const std::string& field_name) const {
+    PAIMON_ASSIGN_OR_RAISE(DataField field, table_schema_->GetField(field_name));
+    return CreateReaders(field);
+}
+
+Result<std::vector<std::shared_ptr<GlobalIndexReader>>>
 RowRangeGlobalIndexScannerImpl::CreateReaders(int32_t field_id) const {
     PAIMON_ASSIGN_OR_RAISE(DataField field, table_schema_->GetField(field_id));
+    return CreateReaders(field);
+}
+
+Result<std::vector<std::shared_ptr<GlobalIndexReader>>>
+RowRangeGlobalIndexScannerImpl::CreateReaders(const DataField& field) const {
     auto field_iter = grouped_entries_.find(field.Id());
     if (field_iter == grouped_entries_.end()) {
         return std::vector<std::shared_ptr<GlobalIndexReader>>();
@@ -95,14 +108,16 @@ Result<std::shared_ptr<GlobalIndexReader>> RowRangeGlobalIndexScannerImpl::Creat
     // TODO(xinyu.lxy): c_arrow_schema may contains additional associated fields.
     auto arrow_field = DataField::ConvertDataFieldToArrowField(field);
     auto arrow_schema = arrow::schema({arrow_field});
+
     ArrowSchema c_arrow_schema;
     PAIMON_RETURN_NOT_OK_FROM_ARROW(arrow::ExportSchema(*arrow_schema, &c_arrow_schema));
     auto index_io_metas = ToGlobalIndexIOMetas(entries);
+    ScopeGuard guard([&]() { ArrowSchemaRelease(&c_arrow_schema); });
     return indexer->CreateReader(&c_arrow_schema, index_file_manager_, index_io_metas, pool_);
 }
 
 std::vector<GlobalIndexIOMeta> RowRangeGlobalIndexScannerImpl::ToGlobalIndexIOMetas(
-    const std::vector<IndexManifestEntry>& entries) {
+    const std::vector<IndexManifestEntry>& entries) const {
     std::vector<GlobalIndexIOMeta> index_io_metas;
     index_io_metas.reserve(entries.size());
     for (const auto& entry : entries) {
@@ -112,12 +127,12 @@ std::vector<GlobalIndexIOMeta> RowRangeGlobalIndexScannerImpl::ToGlobalIndexIOMe
 }
 
 GlobalIndexIOMeta RowRangeGlobalIndexScannerImpl::ToGlobalIndexIOMeta(
-    const IndexManifestEntry& entry) {
+    const IndexManifestEntry& entry) const {
     const auto& index_file = entry.index_file;
     assert(index_file->GetGlobalIndexMeta());
     const auto& global_index_meta = index_file->GetGlobalIndexMeta().value();
-    return {index_file->FileName(), index_file->FileSize(),
-            Range(global_index_meta.row_range_start, global_index_meta.row_range_end),
+    return {index_file_manager_->ToPath(index_file), index_file->FileSize(),
+            /*range_end=*/global_index_meta.row_range_end - global_index_meta.row_range_start,
             global_index_meta.index_meta};
 }
 

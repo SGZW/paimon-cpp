@@ -23,8 +23,8 @@
 #include <utility>
 #include <vector>
 
+#include "paimon/core/global_index/global_index_evaluator.h"
 #include "paimon/core/schema/table_schema.h"
-#include "paimon/global_index/global_index_evaluator.h"
 #include "paimon/global_index/global_index_reader.h"
 #include "paimon/predicate/compound_predicate.h"
 
@@ -39,11 +39,22 @@ class GlobalIndexEvaluatorImpl : public GlobalIndexEvaluator {
         : table_schema_(table_schema), create_index_readers_(std::move(create_index_readers)) {}
 
     Result<std::optional<std::shared_ptr<GlobalIndexResult>>> Evaluate(
-        const std::shared_ptr<Predicate>& predicate) override;
+        const std::shared_ptr<Predicate>& predicate,
+        const std::shared_ptr<VectorSearch>& vector_search) override;
 
  private:
+    Result<std::optional<std::shared_ptr<GlobalIndexResult>>> EvaluateVectorSearch(
+        const std::shared_ptr<VectorSearch>& vector_search,
+        const std::optional<std::shared_ptr<GlobalIndexResult>>& predicate_result);
+
+    Result<std::optional<std::shared_ptr<GlobalIndexResult>>> EvaluatePredicate(
+        const std::shared_ptr<Predicate>& predicate);
+
     Result<std::optional<std::shared_ptr<GlobalIndexResult>>> EvaluateCompoundPredicate(
         const std::shared_ptr<CompoundPredicate>& compound_predicate);
+
+    Result<std::vector<std::shared_ptr<GlobalIndexReader>>> GetIndexReaders(
+        const std::string& field_name);
 
  private:
     std::shared_ptr<TableSchema> table_schema_;

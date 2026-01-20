@@ -32,7 +32,7 @@
 
 namespace paimon::test {
 
-TEST(FileSystemCatalogTest, TestDataBaseExists) {
+TEST(FileSystemCatalogTest, TestDatabaseExists) {
     std::map<std::string, std::string> options;
     options[Options::FILE_SYSTEM] = "local";
     options[Options::FILE_FORMAT] = "orc";
@@ -41,14 +41,14 @@ TEST(FileSystemCatalogTest, TestDataBaseExists) {
     ASSERT_TRUE(dir);
     FileSystemCatalog catalog(core_options.GetFileSystem(), dir->Str());
 
-    ASSERT_OK_AND_ASSIGN(auto exist, catalog.DataBaseExists("db1"));
+    ASSERT_OK_AND_ASSIGN(auto exist, catalog.DatabaseExists("db1"));
     ASSERT_FALSE(exist);
 
     ASSERT_OK(catalog.CreateDatabase("db1", options, /*ignore_if_exists=*/false));
     ASSERT_NOK(catalog.CreateDatabase("db1", options, /*ignore_if_exists=*/false));
     ASSERT_OK(catalog.CreateDatabase("db1", options, /*ignore_if_exists=*/true));
 
-    ASSERT_OK_AND_ASSIGN(exist, catalog.DataBaseExists("db1"));
+    ASSERT_OK_AND_ASSIGN(exist, catalog.DatabaseExists("db1"));
     ASSERT_TRUE(exist);
     ASSERT_OK_AND_ASSIGN(std::vector<std::string> db_names, catalog.ListDatabases());
     ASSERT_EQ(1, db_names.size());
@@ -134,12 +134,16 @@ TEST(FileSystemCatalogTest, TestCreateTable) {
     arrow::Schema typed_schema(fields);
     ::ArrowSchema schema;
     ASSERT_TRUE(arrow::ExportSchema(typed_schema, &schema).ok());
-    ASSERT_OK(catalog.CreateTable(Identifier("db1", "tbl1"), &schema,
+    Identifier identifier("db1", "tbl1");
+    ASSERT_OK_AND_ASSIGN(auto exist, catalog.TableExists(identifier));
+    ASSERT_FALSE(exist);
+
+    ASSERT_OK(catalog.CreateTable(identifier, &schema,
                                   /*partition_keys=*/{"f1", "f2"}, /*primary_keys=*/{"f3"}, options,
                                   false));
-    ASSERT_OK_AND_ASSIGN(std::vector<std::string> table_names, catalog.ListTables("db1"));
-    ASSERT_EQ(1, table_names.size());
-    ASSERT_EQ(table_names[0], "tbl1");
+
+    ASSERT_OK_AND_ASSIGN(exist, catalog.TableExists(identifier));
+    ASSERT_TRUE(exist);
     ArrowSchemaRelease(&schema);
 }
 
@@ -180,10 +184,9 @@ TEST(FileSystemCatalogTest, TestCreateTableWithBlob) {
     ASSERT_OK_AND_ASSIGN(std::vector<std::string> table_names, catalog.ListTables("db1"));
     ASSERT_EQ(1, table_names.size());
     ASSERT_EQ(table_names[0], "tbl1");
-    ASSERT_OK_AND_ASSIGN(std::optional<std::shared_ptr<Schema>> table_schema,
+    ASSERT_OK_AND_ASSIGN(std::shared_ptr<Schema> table_schema,
                          catalog.LoadTableSchema(Identifier("db1", "tbl1")));
-    ASSERT_TRUE(table_schema.has_value());
-    ASSERT_OK_AND_ASSIGN(auto arrow_schema, (*table_schema)->GetArrowSchema());
+    ASSERT_OK_AND_ASSIGN(auto arrow_schema, table_schema->GetArrowSchema());
     auto loaded_schema = arrow::ImportSchema(arrow_schema.get()).ValueOrDie();
     ASSERT_TRUE(typed_schema.Equals(loaded_schema));
     ArrowSchemaRelease(&schema);
@@ -336,32 +339,38 @@ TEST(FileSystemCatalogTest, TestValidateTableSchema) {
     ASSERT_OK(catalog.CreateTable(Identifier("db1", "tbl1"), &schema, {"f1"}, {}, options,
                                   /*ignore_if_exists=*/false));
 
-    ASSERT_OK_AND_ASSIGN(std::optional<std::shared_ptr<Schema>> table_schema,
-                         catalog.LoadTableSchema(Identifier("db0", "tbl0")));
-    ASSERT_FALSE(table_schema.has_value());
-    ASSERT_OK_AND_ASSIGN(table_schema, catalog.LoadTableSchema(Identifier("db1", "tbl1")));
-    ASSERT_TRUE(table_schema.has_value());
-    ASSERT_EQ(0, (*table_schema)->Id());
-    ASSERT_EQ(3, (*table_schema)->HighestFieldId());
-    ASSERT_EQ(1, (*table_schema)->PartitionKeys().size());
-    ASSERT_EQ(0, (*table_schema)->PrimaryKeys().size());
-    ASSERT_EQ(-1, (*table_schema)->NumBuckets());
-    ASSERT_FALSE((*table_schema)->Comment().has_value());
-    std::vector<std::string> field_names = (*table_schema)->FieldNames();
+    ASSERT_NOK_WITH_MSG(catalog.LoadTableSchema(Identifier("db0", "tbl0")),
+                        "Identifier{database=\'db0\', table=\'tbl0\'} not exist");
+    ASSERT_OK_AND_ASSIGN(std::shared_ptr<Schema> table_schema,
+                         catalog.LoadTableSchema(Identifier("db1", "tbl1")));
+    ASSERT_EQ(0, table_schema->Id());
+    ASSERT_EQ(3, table_schema->HighestFieldId());
+    ASSERT_EQ(1, table_schema->PartitionKeys().size());
+    ASSERT_EQ(0, table_schema->PrimaryKeys().size());
+    ASSERT_EQ(-1, table_schema->NumBuckets());
+    ASSERT_FALSE(table_schema->Comment().has_value());
+    std::vector<std::string> field_names = table_schema->FieldNames();
     std::vector<std::string> expected_field_names = {"f0", "f1", "f2", "f3"};
     ASSERT_EQ(field_names, expected_field_names);
 
-    ASSERT_OK_AND_ASSIGN(auto arrow_schema, (*table_schema)->GetArrowSchema());
+    ASSERT_OK_AND_ASSIGN(auto fs, FileSystemFactory::Get("local", dir->Str(), {}));
+    std::string schema_path = PathUtil::JoinPath(dir->Str(), "db1.db/tbl1/schema/schema-0");
+    std::string expected_json_schema;
+    ASSERT_OK(fs->ReadFile(schema_path, &expected_json_schema));
+
+    ASSERT_OK_AND_ASSIGN(auto json_schema, table_schema->GetJsonSchema());
+    ASSERT_EQ(expected_json_schema, json_schema);
+
+    ASSERT_OK_AND_ASSIGN(auto arrow_schema, table_schema->GetArrowSchema());
     auto loaded_schema = arrow::ImportSchema(arrow_schema.get()).ValueOrDie();
     ASSERT_TRUE(typed_schema.Equals(loaded_schema));
 
-    ASSERT_OK_AND_ASSIGN(auto fs, FileSystemFactory::Get("local", dir->Str(), {}));
-    ASSERT_OK(fs->Delete(PathUtil::JoinPath(dir->Str(), "db1.db/tbl1/schema/schema-0")));
-    ASSERT_OK_AND_ASSIGN(table_schema, catalog.LoadTableSchema(Identifier("db1", "tbl1")));
-    ASSERT_FALSE(table_schema.has_value());
+    ASSERT_OK(fs->Delete(schema_path));
+    ASSERT_NOK_WITH_MSG(catalog.LoadTableSchema(Identifier("db1", "tbl1")),
+                        "Identifier{database=\'db1\', table=\'tbl1\'} not exist");
 
     ASSERT_NOK_WITH_MSG(catalog.LoadTableSchema(Identifier("db1", "tbl$11")),
-                        "do not support loading schema for system table.");
+                        "do not support checking TableSchemaExists for system table.");
     ArrowSchemaRelease(&schema);
 }
 

@@ -151,21 +151,6 @@ Status OrcFileBatchReader::SetReadSchema(::ArrowSchema* read_schema,
     return Status::OK();
 }
 
-Status OrcFileBatchReader::SeekToRow(uint64_t row_number) {
-    try {
-        row_reader_->seekToRow(row_number);
-    } catch (const std::exception& e) {
-        return Status::Invalid(
-            fmt::format("orc file batch reader seek to row {} failed for file {}, with {} error",
-                        row_number, file_name_, e.what()));
-    } catch (...) {
-        return Status::UnknownError(fmt::format(
-            "orc file batch reader seek to row {} failed for file {}, with unknown error",
-            row_number, file_name_));
-    }
-    return Status::OK();
-}
-
 Result<BatchReader::ReadBatch> OrcFileBatchReader::NextBatch() {
     if (has_error_) {
         return Status::Invalid(fmt::format(
@@ -241,6 +226,9 @@ Result<::orc::RowReaderOptions> OrcFileBatchReader::CreateRowReaderOptions(
         include_fields.push_back(field_name);
     }
     row_reader_options.include(include_fields);
+    // In order to avoid issue like https://github.com/alibaba/paimon-cpp/issues/42, we explicitly
+    // set GMT timezone.
+    row_reader_options.setTimezoneName("GMT");
     row_reader_options.searchArgument(std::move(search_arg));
 
     PAIMON_ASSIGN_OR_RAISE(

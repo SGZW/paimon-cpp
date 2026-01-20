@@ -38,4 +38,4 @@ inline constexpr bool LuminaConstructibleFrom =
     std::is_constructible_v<T, Args...>;
 #endif
 
-}
+} // namespace lumina::mpl

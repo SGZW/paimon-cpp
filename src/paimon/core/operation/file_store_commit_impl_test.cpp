@@ -71,24 +71,6 @@
 namespace paimon::test {
 class GmockFileSystem : public LocalFileSystem {
  public:
-    GmockFileSystem() {
-        ON_CALL(*this, ListDir(testing::_, testing::_))
-            .WillByDefault(testing::Invoke(
-                [&](const std::string& directory,
-                    std::vector<std::unique_ptr<BasicFileStatus>>* file_status_list) {
-                    return this->LocalFileSystem::ListDir(directory, file_status_list);
-                }));
-        ON_CALL(*this, ReadFile(testing::_, testing::_))
-            .WillByDefault(testing::Invoke([&](const std::string& path, std::string* content) {
-                return this->FileSystem::ReadFile(path, content);
-            }));
-        ON_CALL(*this, AtomicStore(::testing::_, ::testing::_))
-            .WillByDefault(
-                testing::Invoke([&](const std::string& path, const std::string& content) {
-                    return this->FileSystem::AtomicStore(path, content);
-                }));
-    }
-
     MOCK_METHOD(Status, ReadFile, (const std::string& path, std::string* content), (override));
     MOCK_METHOD(Status, ListDir,
                 (const std::string& directory,
@@ -106,7 +88,29 @@ class GmockFileSystemFactory : public LocalFileSystemFactory {
 
     Result<std::unique_ptr<FileSystem>> Create(
         const std::string& path, const std::map<std::string, std::string>& options) const override {
-        return std::make_unique<GmockFileSystem>();
+        auto fs = std::make_unique<GmockFileSystem>();
+        using ::testing::A;
+        using ::testing::Invoke;
+
+        ON_CALL(*fs, ListDir(A<const std::string&>(),
+                             A<std::vector<std::unique_ptr<BasicFileStatus>>*>()))
+            .WillByDefault(
+                Invoke([&](const std::string& directory,
+                           std::vector<std::unique_ptr<BasicFileStatus>>* file_status_list) {
+                    return fs->LocalFileSystem::ListDir(directory, file_status_list);
+                }));
+
+        ON_CALL(*fs, ReadFile(A<const std::string&>(), A<std::string*>()))
+            .WillByDefault(Invoke([&](const std::string& path, std::string* content) {
+                return fs->FileSystem::ReadFile(path, content);
+            }));
+
+        ON_CALL(*fs, AtomicStore(A<const std::string&>(), A<const std::string&>()))
+            .WillByDefault(Invoke([&](const std::string& path, const std::string& content) {
+                return fs->FileSystem::AtomicStore(path, content);
+            }));
+
+        return fs;
     }
 };
 
@@ -813,7 +817,8 @@ TEST_F(FileStoreCommitImplTest, TestCleanUpTmpManifests) {
         std::vector<std::shared_ptr<IndexFileMeta>> new_index_files;
         new_index_files.push_back(std::make_shared<IndexFileMeta>(
             "bitmap", "bitmap-global-index-567ff117-68a0-436d-a270-dc8f6e403d06.index", 100, 5,
-            std::nullopt));
+            /*dv_ranges=*/std::nullopt,
+            /*external_path=*/std::nullopt, std::nullopt));
         DataIncrement data_increment({}, {}, {}, std::move(new_index_files), {});
         std::shared_ptr<CommitMessage> msgs = std::make_shared<CommitMessageImpl>(
             BinaryRowGenerator::GenerateRow({10}, GetDefaultPool().get()), /*bucket=*/0,

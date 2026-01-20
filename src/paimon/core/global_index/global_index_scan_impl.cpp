@@ -104,13 +104,15 @@ Status GlobalIndexScanImpl::Scan() {
     }
     auto arrow_schema = DataField::ConvertDataFieldsToArrowSchema(table_schema_->Fields());
     PAIMON_ASSIGN_OR_RAISE(std::vector<std::string> external_paths, options_.CreateExternalPaths());
+    PAIMON_ASSIGN_OR_RAISE(std::optional<std::string> global_index_external_path,
+                           options_.CreateGlobalIndexExternalPath());
     PAIMON_ASSIGN_OR_RAISE(
         path_factory_,
         FileStorePathFactory::Create(
             root_path_, arrow_schema, table_schema_->PartitionKeys(),
             options_.GetPartitionDefaultName(), options_.GetWriteFileFormat()->Identifier(),
             options_.DataFilePrefix(), options_.LegacyPartitionNameEnabled(), external_paths,
-            options_.IndexFileInDataFileDir(), pool_));
+            global_index_external_path, options_.IndexFileInDataFileDir(), pool_));
 
     PAIMON_ASSIGN_OR_RAISE(std::unique_ptr<IndexManifestFile> index_manifest_file,
                            IndexManifestFile::Create(
@@ -143,22 +145,38 @@ Status GlobalIndexScanImpl::Scan() {
 
 Result<std::optional<std::shared_ptr<GlobalIndexResult>>> GlobalIndexScanImpl::ParallelScan(
     const std::vector<Range>& ranges, const std::shared_ptr<Predicate>& predicate,
-    const std::shared_ptr<Executor>& executor) {
-    std::vector<std::shared_ptr<RowRangeGlobalIndexScanner>> range_scanners;
+    const std::shared_ptr<VectorSearch>& vector_search, const std::shared_ptr<Executor>& executor) {
+    std::vector<std::shared_ptr<RowRangeGlobalIndexScannerImpl>> range_scanners;
     range_scanners.reserve(ranges.size());
     for (const auto& range : ranges) {
         PAIMON_ASSIGN_OR_RAISE(std::shared_ptr<RowRangeGlobalIndexScanner> scanner,
                                CreateRangeScan(range));
-        range_scanners.push_back(scanner);
+        auto scanner_impl = std::dynamic_pointer_cast<RowRangeGlobalIndexScannerImpl>(scanner);
+        if (!scanner_impl) {
+            return Status::Invalid(
+                "invalid RowRangeGlobalIndexScanner, fail to cast to "
+                "RowRangeGlobalIndexScannerImpl");
+        }
+        range_scanners.push_back(scanner_impl);
     }
 
     std::vector<std::future<Result<std::optional<std::shared_ptr<GlobalIndexResult>>>>> futures;
-    for (const auto& scanner : range_scanners) {
+    for (size_t i = 0; i < range_scanners.size(); i++) {
+        const auto& scanner = range_scanners[i];
+        const auto& range = ranges[i];
         auto search_index =
-            [&scanner, &predicate]() -> Result<std::optional<std::shared_ptr<GlobalIndexResult>>> {
+            [&scanner, &predicate, &vector_search,
+             &range]() -> Result<std::optional<std::shared_ptr<GlobalIndexResult>>> {
             PAIMON_ASSIGN_OR_RAISE(std::shared_ptr<GlobalIndexEvaluator> evaluator,
                                    scanner->CreateIndexEvaluator());
-            return evaluator->Evaluate(predicate);
+            PAIMON_ASSIGN_OR_RAISE(std::optional<std::shared_ptr<GlobalIndexResult>> index_result,
+                                   evaluator->Evaluate(predicate, vector_search));
+            if (!index_result) {
+                return index_result;
+            }
+            PAIMON_ASSIGN_OR_RAISE(std::shared_ptr<GlobalIndexResult> result_with_offset,
+                                   index_result.value()->AddOffset(range.from));
+            return std::optional<std::shared_ptr<GlobalIndexResult>>(result_with_offset);
         };
         futures.push_back(Via(executor.get(), search_index));
     }
@@ -180,17 +198,16 @@ Result<std::optional<std::shared_ptr<GlobalIndexResult>>> GlobalIndexScanImpl::P
     }
 
     // union result from multiple ranges
-    std::shared_ptr<GlobalIndexResult> final_global_index_result =
-        BitmapGlobalIndexResult::FromRanges({});
+    std::optional<std::shared_ptr<GlobalIndexResult>> final_global_index_result;
 
     for (size_t i = 0; i < results.size(); ++i) {
-        if (results[i]) {
-            PAIMON_ASSIGN_OR_RAISE(final_global_index_result,
-                                   final_global_index_result->Or(results[i].value()));
+        std::shared_ptr<GlobalIndexResult> result =
+            results[i] ? results[i].value() : BitmapGlobalIndexResult::FromRanges({ranges[i]});
+        if (!final_global_index_result) {
+            final_global_index_result = result;
         } else {
-            PAIMON_ASSIGN_OR_RAISE(
-                final_global_index_result,
-                final_global_index_result->Or(BitmapGlobalIndexResult::FromRanges({ranges[i]})));
+            PAIMON_ASSIGN_OR_RAISE(final_global_index_result,
+                                   final_global_index_result.value()->Or(result));
         }
     }
     return std::optional<std::shared_ptr<GlobalIndexResult>>(final_global_index_result);

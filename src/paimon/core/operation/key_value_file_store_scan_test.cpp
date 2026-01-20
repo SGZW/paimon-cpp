@@ -75,14 +75,17 @@ class KeyValueFileStoreScanTest : public testing::Test {
         auto arrow_schema = DataField::ConvertDataFieldsToArrowSchema(table_schema->Fields());
         PAIMON_ASSIGN_OR_RAISE(std::vector<std::string> external_paths,
                                core_options.CreateExternalPaths());
+        PAIMON_ASSIGN_OR_RAISE(std::optional<std::string> global_index_external_path,
+                               core_options.CreateGlobalIndexExternalPath());
+
         PAIMON_ASSIGN_OR_RAISE(
             std::shared_ptr<FileStorePathFactory> path_factory,
-            FileStorePathFactory::Create(table_path, arrow_schema, table_schema->PartitionKeys(),
-                                         core_options.GetPartitionDefaultName(),
-                                         core_options.GetWriteFileFormat()->Identifier(),
-                                         core_options.DataFilePrefix(),
-                                         core_options.LegacyPartitionNameEnabled(), external_paths,
-                                         core_options.IndexFileInDataFileDir(), pool_));
+            FileStorePathFactory::Create(
+                table_path, arrow_schema, table_schema->PartitionKeys(),
+                core_options.GetPartitionDefaultName(),
+                core_options.GetWriteFileFormat()->Identifier(), core_options.DataFilePrefix(),
+                core_options.LegacyPartitionNameEnabled(), external_paths,
+                global_index_external_path, core_options.IndexFileInDataFileDir(), pool_));
         auto manifest_file_format = core_options.GetManifestFormat();
         auto snapshot_manager = std::make_shared<SnapshotManager>(fs, table_path);
 
@@ -132,9 +135,10 @@ TEST_F(KeyValueFileStoreScanTest, TestMaxSequenceNumber) {
         std::string table_path = paimon::test::GetDataDir() +
                                  "orc/pk_table_with_dv_cardinality.db/pk_table_with_dv_cardinality";
         std::vector<std::map<std::string, std::string>> partition_filters = {{{"f1", "10"}}};
-        auto scan_filter = std::make_shared<ScanFilter>(/*predicate=*/nullptr,
-                                                        /*partition_filters=*/partition_filters,
-                                                        /*bucket_filter=*/0);
+        auto scan_filter =
+            std::make_shared<ScanFilter>(/*predicate=*/nullptr,
+                                         /*partition_filters=*/partition_filters,
+                                         /*bucket_filter=*/0, /*vector_search=*/nullptr);
         ASSERT_OK_AND_ASSIGN(std::unique_ptr<FileStoreScan> scan,
                              CreateFileStoreScan(table_path, scan_filter,
                                                  /*table_schema_id=*/0, /*snapshot_id=*/2));
@@ -155,9 +159,10 @@ TEST_F(KeyValueFileStoreScanTest, TestMaxSequenceNumber) {
                                  "orc/pk_table_with_dv_cardinality.db/"
                                  "pk_table_with_dv_cardinality";
         std::vector<std::map<std::string, std::string>> partition_filters = {{{"f1", "10"}}};
-        auto scan_filter = std::make_shared<ScanFilter>(/*predicate=*/nullptr,
-                                                        /*partition_filters=*/partition_filters,
-                                                        /*bucket_filter=*/1);
+        auto scan_filter =
+            std::make_shared<ScanFilter>(/*predicate=*/nullptr,
+                                         /*partition_filters=*/partition_filters,
+                                         /*bucket_filter=*/1, /*vector_search=*/nullptr);
         ASSERT_OK_AND_ASSIGN(std::unique_ptr<FileStoreScan> scan,
                              CreateFileStoreScan(table_path, scan_filter,
                                                  /*table_schema_id=*/0, /*snapshot_id=*/4));
@@ -172,9 +177,10 @@ TEST_F(KeyValueFileStoreScanTest, TestMaxSequenceNumber) {
             paimon::test::GetDataDir() + "orc/pk_table_with_mor.db/pk_table_with_mor";
         std::vector<std::map<std::string, std::string>> partition_filters = {
             {{"p0", "1"}, {"p1", "0"}}};
-        auto scan_filter = std::make_shared<ScanFilter>(/*predicate=*/nullptr,
-                                                        /*partition_filters=*/partition_filters,
-                                                        /*bucket_filter=*/0);
+        auto scan_filter =
+            std::make_shared<ScanFilter>(/*predicate=*/nullptr,
+                                         /*partition_filters=*/partition_filters,
+                                         /*bucket_filter=*/0, /*vector_search=*/nullptr);
         ASSERT_OK_AND_ASSIGN(std::unique_ptr<FileStoreScan> scan,
                              CreateFileStoreScan(table_path, scan_filter,
                                                  /*table_schema_id=*/0, /*snapshot_id=*/1));
@@ -189,9 +195,10 @@ TEST_F(KeyValueFileStoreScanTest, TestMaxSequenceNumber) {
             paimon::test::GetDataDir() + "orc/pk_table_with_mor.db/pk_table_with_mor";
         std::vector<std::map<std::string, std::string>> partition_filters = {
             {{"p0", "0"}, {"p1", "0"}}};
-        auto scan_filter = std::make_shared<ScanFilter>(/*predicate=*/nullptr,
-                                                        /*partition_filters=*/partition_filters,
-                                                        /*bucket_filter=*/0);
+        auto scan_filter =
+            std::make_shared<ScanFilter>(/*predicate=*/nullptr,
+                                         /*partition_filters=*/partition_filters,
+                                         /*bucket_filter=*/0, /*vector_search=*/nullptr);
         ASSERT_OK_AND_ASSIGN(std::unique_ptr<FileStoreScan> scan,
                              CreateFileStoreScan(table_path, scan_filter,
                                                  /*table_schema_id=*/0, /*snapshot_id=*/2));
@@ -205,9 +212,10 @@ TEST_F(KeyValueFileStoreScanTest, TestMaxSequenceNumber) {
         std::string table_path =
             paimon::test::GetDataDir() + "orc/pk_table_partial_update.db/pk_table_partial_update";
         std::vector<std::map<std::string, std::string>> partition_filters = {};
-        auto scan_filter = std::make_shared<ScanFilter>(/*predicate=*/nullptr,
-                                                        /*partition_filters=*/partition_filters,
-                                                        /*bucket_filter=*/0);
+        auto scan_filter =
+            std::make_shared<ScanFilter>(/*predicate=*/nullptr,
+                                         /*partition_filters=*/partition_filters,
+                                         /*bucket_filter=*/0, /*vector_search=*/nullptr);
         ASSERT_OK_AND_ASSIGN(std::unique_ptr<FileStoreScan> scan,
                              CreateFileStoreScan(table_path, scan_filter,
                                                  /*table_schema_id=*/0, /*snapshot_id=*/2));
@@ -235,7 +243,7 @@ TEST_F(KeyValueFileStoreScanTest, TestSplitAndSetKeyValueFilter) {
                          PredicateBuilder::And({not_equal, equal, greater_than, less_than}));
     auto scan_filter = std::make_shared<ScanFilter>(/*predicate=*/predicate,
                                                     /*partition_filters=*/partition_filters,
-                                                    /*bucket_filter=*/0);
+                                                    /*bucket_filter=*/0, /*vector_search=*/nullptr);
     ASSERT_OK_AND_ASSIGN(std::unique_ptr<KeyValueFileStoreScan> scan,
                          CreateFileStoreScan(table_path, scan_filter,
                                              /*table_schema_id=*/0, /*snapshot_id=*/1));

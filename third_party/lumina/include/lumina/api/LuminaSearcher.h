@@ -17,19 +17,20 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <lumina/api/Extension.h>
+#include <lumina/api/Options.h>
+#include <lumina/api/Query.h>
+#include <lumina/core/MemoryResource.h>
+#include <lumina/core/NoCopyable.h>
+#include <lumina/core/Result.h>
+#include <lumina/core/Status.h>
+#include <lumina/core/Types.h>
 #include <memory>
+#include <memory_resource>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
-
-#include "lumina/api/Extension.h"
-#include "lumina/api/Options.h"
-#include "lumina/api/Query.h"
-#include "lumina/core/MemoryResource.h"
-#include "lumina/core/NoCopyable.h"
-#include "lumina/core/Result.h"
-#include "lumina/core/Status.h"
-#include "lumina/core/Types.h"
 
 namespace lumina::io {
 class FileReader;
@@ -37,23 +38,25 @@ class FileReader;
 
 namespace lumina::api {
 
+// External "narrow waist" searcher
 class LuminaSearcher final : public core::NoCopyable
 {
 public:
     class Impl;
-    LuminaSearcher(std::unique_ptr<Impl> impl);
+    LuminaSearcher(std::unique_ptr<Impl> impl) noexcept;
+    // -- Semantics: movable, not copyable --
     LuminaSearcher(LuminaSearcher&&) noexcept;
-    ~LuminaSearcher();
+    ~LuminaSearcher() noexcept;
 
-    static core::Result<LuminaSearcher> Create(const SearcherOptions& options);
+    static core::Result<LuminaSearcher> Create(const SearcherOptions& options) noexcept;
     static core::Result<LuminaSearcher> Create(const SearcherOptions& options,
-                                               const core::MemoryResourceConfig& memoryConfig);
+                                               const core::MemoryResourceConfig& memoryConfig) noexcept;
 
-    core::Status Open(const IOOptions& ioOptions);
-    core::Status Open(std::unique_ptr<io::FileReader> reader, const IOOptions& ioOptions);
+    core::Status Open(const IOOptions& ioOptions) noexcept;
+    core::Status Open(std::unique_ptr<io::FileReader> reader, const IOOptions& ioOptions) noexcept;
 
     struct SearchHit {
-        core::VectorId id {0};
+        core::vector_id_t id {0};
         float distance {0.0f};
     };
 
@@ -62,24 +65,27 @@ public:
         std::unordered_map<std::string, std::string> searchStats;
     };
 
+    // Index info: basic searcher metadata
     struct IndexInfo {
-        uint64_t count {0};
-        uint32_t dim {0};
+        uint64_t count {0}; // Total vectors
+        core::dimension_t dim {0};   // Vector dimension
     };
 
-    core::Result<SearchResult> Search(const Query& q, const SearchOptions& options);
+    core::Result<SearchResult> Search(const Query& q, const SearchOptions& options) noexcept;
     core::Result<SearchResult> Search(const Query& q, const SearchOptions& options,
-                                      std::pmr::memory_resource& sessionPool);
+                                      std::pmr::memory_resource& sessionPool) noexcept;
+    // -- Metadata --
     IndexInfo GetMeta() const noexcept;
 
+    // -- Lifecycle --
     core::Status Close() noexcept;
 
-    core::Status Attach(ISearchExtension& ext);
+    // -- Extension attach (per instance) --
+    core::Status Attach(ISearchExtension& ext) noexcept;
 
 private:
-    friend struct core::Result<LuminaSearcher>;
-    LuminaSearcher();
+    // pImpl: internal orchestration and backend selection live in the implementation
     std::unique_ptr<Impl> _p;
 };
 
-}
+} // namespace lumina::api

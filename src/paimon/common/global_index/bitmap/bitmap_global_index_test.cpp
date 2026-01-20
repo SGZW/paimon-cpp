@@ -100,9 +100,10 @@ class BitmapGlobalIndexTest : public ::testing::Test {
         PAIMON_ASSIGN_OR_RAISE(auto result_metas, global_writer->Finish());
         // check meta
         EXPECT_EQ(result_metas.size(), 1);
-        EXPECT_TRUE(StringUtils::StartsWith(result_metas[0].file_name, "bitmap-global-index-"));
-        EXPECT_TRUE(StringUtils::EndsWith(result_metas[0].file_name, ".index"));
-        EXPECT_EQ(result_metas[0].row_id_range, expected_range);
+        auto file_name = PathUtil::GetName(result_metas[0].file_path);
+        EXPECT_TRUE(StringUtils::StartsWith(file_name, "bitmap-global-index-"));
+        EXPECT_TRUE(StringUtils::EndsWith(file_name, ".index"));
+        EXPECT_EQ(result_metas[0].range_end, expected_range.to);
         EXPECT_FALSE(result_metas[0].metadata);
         return result_metas[0];
     }
@@ -141,12 +142,12 @@ class BitmapGlobalIndexTest : public ::testing::Test {
 TEST_F(BitmapGlobalIndexTest, TestToGlobalIndexResult) {
     {
         ASSERT_OK_AND_ASSIGN(auto global_result, BitmapGlobalIndex::ToGlobalIndexResult(
-                                                     Range(10l, 15l), FileIndexResult::Remain()));
-        CheckResult(global_result, {10l, 11l, 12l, 13l, 14l, 15l});
+                                                     /*range_end=*/5l, FileIndexResult::Remain()));
+        CheckResult(global_result, {0l, 1l, 2l, 3l, 4l, 5l});
     }
     {
         ASSERT_OK_AND_ASSIGN(auto global_result, BitmapGlobalIndex::ToGlobalIndexResult(
-                                                     Range(10l, 15l), FileIndexResult::Skip()));
+                                                     /*range_end=*/5l, FileIndexResult::Skip()));
         CheckResult(global_result, {});
     }
     {
@@ -155,7 +156,7 @@ TEST_F(BitmapGlobalIndexTest, TestToGlobalIndexResult) {
         };
         auto file_result = std::make_shared<BitmapIndexResult>(bitmap_supplier);
         ASSERT_OK_AND_ASSIGN(auto global_result, BitmapGlobalIndex::ToGlobalIndexResult(
-                                                     Range(0, 2147483647), file_result));
+                                                     /*range_end=*/2147483647l, file_result));
         CheckResult(global_result, {1l, 4l, 2147483647l});
     }
     {
@@ -169,7 +170,7 @@ TEST_F(BitmapGlobalIndexTest, TestToGlobalIndexResult) {
         };
         auto file_result = std::make_shared<FakeFileIndexResult>();
         ASSERT_NOK_WITH_MSG(
-            BitmapGlobalIndex::ToGlobalIndexResult(Range(0, 100), file_result),
+            BitmapGlobalIndex::ToGlobalIndexResult(/*range_end=*/10l, file_result),
             "invalid FileIndexResult, supposed to be Remain or Skip or BitmapIndexResult");
     }
 }
@@ -216,9 +217,11 @@ TEST_F(BitmapGlobalIndexTest, TestStringType) {
         // result
         CheckResult(reader->VisitGreaterThan(lit_c).value(), {0, 1, 2, 3, 4});
 
-        // test visit topk
-        ASSERT_NOK_WITH_MSG(reader->VisitTopK(10, {1.0f, 2.0f}, nullptr, nullptr),
-                            "FileIndexReaderWrapper is not supposed to handle topk query");
+        // test visit vector search
+        ASSERT_NOK_WITH_MSG(reader->VisitVectorSearch(std::make_shared<VectorSearch>(
+                                "f0", 10, std::vector<float>({1.0f, 2.0f}), nullptr, nullptr,
+                                std::nullopt, std::map<std::string, std::string>())),
+                            "FileIndexReaderWrapper is not supposed to handle vector search query");
     };
 
     {

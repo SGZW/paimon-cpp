@@ -179,7 +179,7 @@ class ReadInteTest : public testing::Test, public ::testing::WithParamInterface<
         EXPECT_OK_AND_ASSIGN(auto input_stream, file_system->Open(split_file_name));
         std::vector<char> split_bytes(input_stream->Length().value_or(0), 0);
         EXPECT_OK_AND_ASSIGN([[maybe_unused]] int32_t read_len,
-                             input_stream -> Read(split_bytes.data(), split_bytes.size()));
+                             input_stream->Read(split_bytes.data(), split_bytes.size()));
         EXPECT_OK(input_stream->Close());
 
         EXPECT_OK_AND_ASSIGN(auto split,
