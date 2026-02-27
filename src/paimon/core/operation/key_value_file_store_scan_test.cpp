@@ -369,8 +369,36 @@ TEST_F(KeyValueFileStoreScanTest, TestFilterByValueFilterWithValueStatsCols) {
             /*first_row_id=*/std::nullopt,
             /*write_cols=*/std::nullopt));
 
+    // max(v0)=50 > 30.1, should be kept.
+    SimpleStats value_stats_keep = BinaryRowGenerator::GenerateStats(
+        /*min=*/{40.0}, /*max=*/{50.0}, /*null=*/{0}, pool.get());
+    ManifestEntry entry_keep(
+        /*kind=*/FileKind::Add(), /*partition=*/BinaryRow::EmptyRow(), /*bucket=*/0,
+        /*total_buckets=*/1,
+        std::make_shared<DataFileMeta>(
+            /*file_name=*/"name_keep", /*file_size=*/1024, /*row_count=*/10,
+            /*min_key=*/BinaryRow::EmptyRow(), /*max_key=*/BinaryRow::EmptyRow(),
+            /*key_stats=*/SimpleStats::EmptyStats(),
+            /*value_stats=*/value_stats_keep,
+            /*min_sequence_number=*/0,
+            /*max_sequence_number=*/10,
+            /*schema_id=*/0,
+            /*level=*/1,
+            /*extra_files=*/std::vector<std::optional<std::string>>(),
+            /*creation_time=*/Timestamp(0, 0),
+            /*delete_row_count=*/std::nullopt,
+            /*embedded_index=*/nullptr,
+            /*file_source=*/FileSource::Append(),
+            /*value_stats_cols=*/value_stats_cols,
+            /*external_path=*/std::nullopt,
+            /*first_row_id=*/std::nullopt,
+            /*write_cols=*/std::nullopt));
+
     // max(v0)=20 <= 30.1, should be filtered out.
     ASSERT_OK_AND_ASSIGN(bool keep, scan->FilterByStats(entry));
     ASSERT_FALSE(keep);
+
+    ASSERT_OK_AND_ASSIGN(keep, scan->FilterByStats(entry_keep));
+    ASSERT_TRUE(keep);
 }
 }  // namespace paimon::test
