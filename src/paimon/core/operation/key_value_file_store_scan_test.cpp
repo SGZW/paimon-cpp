@@ -44,6 +44,7 @@
 #include "paimon/executor.h"
 #include "paimon/format/file_format.h"
 #include "paimon/memory/memory_pool.h"
+#include "paimon/metrics.h"
 #include "paimon/predicate/literal.h"
 #include "paimon/predicate/predicate_builder.h"
 #include "paimon/scan_context.h"
@@ -166,12 +167,20 @@ TEST_F(KeyValueFileStoreScanTest, TestMaxSequenceNumber) {
         ASSERT_OK_AND_ASSIGN(uint64_t last_scan_resulted_table_files,
                              metrics->GetCounter(ScanMetrics::LAST_SCAN_RESULTED_TABLE_FILES));
         ASSERT_EQ(last_scan_resulted_table_files, 1u);
+
+        ASSERT_OK_AND_ASSIGN(HistogramStats duration_stats,
+                             metrics->GetHistogramStats(ScanMetrics::SCAN_DURATION));
+        ASSERT_EQ(duration_stats.count, 1u);
         int64_t max_sequence_num = GetMaxSequenceNumberOfRawPlan(raw_plan);
         ASSERT_EQ(max_sequence_num, 1);
         // test multiple scan
         ASSERT_OK_AND_ASSIGN(Snapshot snapshot, scan->GetSnapshotManager()->LoadSnapshot(4));
         scan->WithSnapshot(snapshot);
         ASSERT_OK_AND_ASSIGN(raw_plan, scan->CreatePlan());
+
+        ASSERT_OK_AND_ASSIGN(duration_stats,
+                             metrics->GetHistogramStats(ScanMetrics::SCAN_DURATION));
+        ASSERT_EQ(duration_stats.count, 2u);
         max_sequence_num = GetMaxSequenceNumberOfRawPlan(raw_plan);
         ASSERT_EQ(max_sequence_num, 2);
     }

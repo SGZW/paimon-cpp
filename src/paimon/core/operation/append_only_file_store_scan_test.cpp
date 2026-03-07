@@ -26,6 +26,7 @@
 #include "paimon/common/data/binary_row.h"
 #include "paimon/common/data/binary_row_writer.h"
 #include "paimon/core/manifest/partition_entry.h"
+#include "paimon/core/operation/metrics/scan_metrics.h"
 #include "paimon/core/schema/schema_manager.h"
 #include "paimon/core/schema/table_schema.h"
 #include "paimon/core/stats/simple_stats_evolution.h"
@@ -34,6 +35,7 @@
 #include "paimon/defs.h"
 #include "paimon/fs/local/local_file_system.h"
 #include "paimon/memory/memory_pool.h"
+#include "paimon/metrics.h"
 #include "paimon/predicate/predicate_builder.h"
 #include "paimon/scan_context.h"
 #include "paimon/status.h"
@@ -98,6 +100,21 @@ TEST(AppendOnlyFileStoreScanTest, TestReadPartitionEntries) {
 
     auto file_store_scan = typed_table_scan->snapshot_reader_->scan_;
     ASSERT_TRUE(file_store_scan);
+
+    // Verify scan duration histogram is recorded during plan creation.
+    ASSERT_OK_AND_ASSIGN(std::shared_ptr<FileStoreScan::RawPlan> plan, file_store_scan->CreatePlan());
+    (void)plan;
+    std::shared_ptr<Metrics> metrics = file_store_scan->GetScanMetrics();
+    ASSERT_TRUE(metrics);
+    ASSERT_OK_AND_ASSIGN(HistogramStats duration_stats,
+                         metrics->GetHistogramStats(ScanMetrics::SCAN_DURATION));
+    ASSERT_EQ(duration_stats.count, 1u);
+    ASSERT_OK_AND_ASSIGN(plan, file_store_scan->CreatePlan());
+    (void)plan;
+    ASSERT_OK_AND_ASSIGN(duration_stats,
+                         metrics->GetHistogramStats(ScanMetrics::SCAN_DURATION));
+    ASSERT_EQ(duration_stats.count, 2u);
+
     ASSERT_OK_AND_ASSIGN(std::vector<PartitionEntry> result_partition_entries,
                          file_store_scan->ReadPartitionEntries());
 
