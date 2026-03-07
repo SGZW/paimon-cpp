@@ -102,7 +102,8 @@ TEST(AppendOnlyFileStoreScanTest, TestReadPartitionEntries) {
     ASSERT_TRUE(file_store_scan);
 
     // Verify scan duration histogram is recorded during plan creation.
-    ASSERT_OK_AND_ASSIGN(std::shared_ptr<FileStoreScan::RawPlan> plan, file_store_scan->CreatePlan());
+    ASSERT_OK_AND_ASSIGN(std::shared_ptr<FileStoreScan::RawPlan> plan,
+                         file_store_scan->CreatePlan());
     (void)plan;
     std::shared_ptr<Metrics> metrics = file_store_scan->GetScanMetrics();
     ASSERT_TRUE(metrics);
@@ -111,8 +112,7 @@ TEST(AppendOnlyFileStoreScanTest, TestReadPartitionEntries) {
     ASSERT_EQ(duration_stats.count, 1u);
     ASSERT_OK_AND_ASSIGN(plan, file_store_scan->CreatePlan());
     (void)plan;
-    ASSERT_OK_AND_ASSIGN(duration_stats,
-                         metrics->GetHistogramStats(ScanMetrics::SCAN_DURATION));
+    ASSERT_OK_AND_ASSIGN(duration_stats, metrics->GetHistogramStats(ScanMetrics::SCAN_DURATION));
     ASSERT_EQ(duration_stats.count, 2u);
 
     ASSERT_OK_AND_ASSIGN(std::vector<PartitionEntry> result_partition_entries,

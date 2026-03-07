@@ -122,7 +122,7 @@ TEST(HistogramWindowingImplTest, TestMinNumPerWindow100Case) {
 TEST(HistogramWindowingImplTest, TestLargeDatasetInSingleWindow) {
     // Use a large window to avoid relying on wall clock.
     HistogramWindowingImpl h(/*num_windows=*/4, /*micros_per_window=*/60ULL * 1000ULL * 1000ULL,
-                              /*min_num=*/1);
+                             /*min_num=*/1);
 
     constexpr uint64_t n = 10000;
     for (uint64_t i = 1; i <= n; ++i) {
