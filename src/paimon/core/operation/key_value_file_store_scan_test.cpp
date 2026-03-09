@@ -167,20 +167,12 @@ TEST_F(KeyValueFileStoreScanTest, TestMaxSequenceNumber) {
         ASSERT_OK_AND_ASSIGN(uint64_t last_scan_resulted_table_files,
                              metrics->GetCounter(ScanMetrics::LAST_SCAN_RESULTED_TABLE_FILES));
         ASSERT_EQ(last_scan_resulted_table_files, 1u);
-
-        ASSERT_OK_AND_ASSIGN(HistogramStats duration_stats,
-                             metrics->GetHistogramStats(ScanMetrics::SCAN_DURATION));
-        ASSERT_EQ(duration_stats.count, 1u);
         int64_t max_sequence_num = GetMaxSequenceNumberOfRawPlan(raw_plan);
         ASSERT_EQ(max_sequence_num, 1);
         // test multiple scan
         ASSERT_OK_AND_ASSIGN(Snapshot snapshot, scan->GetSnapshotManager()->LoadSnapshot(4));
         scan->WithSnapshot(snapshot);
         ASSERT_OK_AND_ASSIGN(raw_plan, scan->CreatePlan());
-
-        ASSERT_OK_AND_ASSIGN(duration_stats,
-                             metrics->GetHistogramStats(ScanMetrics::SCAN_DURATION));
-        ASSERT_EQ(duration_stats.count, 2u);
         max_sequence_num = GetMaxSequenceNumberOfRawPlan(raw_plan);
         ASSERT_EQ(max_sequence_num, 2);
     }
@@ -255,6 +247,47 @@ TEST_F(KeyValueFileStoreScanTest, TestMaxSequenceNumber) {
         int64_t max_sequence_num = GetMaxSequenceNumberOfRawPlan(raw_plan);
         ASSERT_EQ(max_sequence_num, 7);
     }
+}
+
+TEST_F(KeyValueFileStoreScanTest, TestScanDurationMetric) {
+    std::string table_path = paimon::test::GetDataDir() +
+                             "orc/pk_table_with_dv_cardinality.db/pk_table_with_dv_cardinality";
+    std::vector<std::map<std::string, std::string>> partition_filters = {{{"f1", "10"}}};
+    auto scan_filter = std::make_shared<ScanFilter>(/*predicate=*/nullptr,
+                                                    /*partition_filters=*/partition_filters,
+                                                    /*bucket_filter=*/0, /*vector_search=*/nullptr);
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<FileStoreScan> scan,
+                         CreateFileStoreScan(table_path, scan_filter,
+                                             /*table_schema_id=*/0, /*snapshot_id=*/2));
+
+    constexpr uint64_t kPlanCountPerSnapshot = 3;
+    const uint64_t kPlanCount = kPlanCountPerSnapshot * 2;
+    for (uint64_t i = 0; i < kPlanCountPerSnapshot; ++i) {
+        ASSERT_OK_AND_ASSIGN(Snapshot snapshot2, scan->GetSnapshotManager()->LoadSnapshot(2));
+        scan->WithSnapshot(snapshot2);
+        ASSERT_OK_AND_ASSIGN(std::shared_ptr<FileStoreScan::RawPlan> raw_plan, scan->CreatePlan());
+        (void)raw_plan;
+
+        ASSERT_OK_AND_ASSIGN(Snapshot snapshot4, scan->GetSnapshotManager()->LoadSnapshot(4));
+        scan->WithSnapshot(snapshot4);
+        ASSERT_OK_AND_ASSIGN(raw_plan, scan->CreatePlan());
+        (void)raw_plan;
+    }
+
+    std::shared_ptr<Metrics> metrics = scan->GetScanMetrics();
+    ASSERT_TRUE(metrics);
+
+    ASSERT_OK_AND_ASSIGN(uint64_t last_scan_duration,
+                         metrics->GetCounter(ScanMetrics::LAST_SCAN_DURATION));
+    ASSERT_OK_AND_ASSIGN(HistogramStats stats,
+                         metrics->GetHistogramStats(ScanMetrics::SCAN_DURATION));
+    ASSERT_EQ(stats.count, kPlanCount);
+    ASSERT_LE(stats.min, stats.max);
+    ASSERT_LE(stats.min, static_cast<double>(last_scan_duration));
+    ASSERT_LE(static_cast<double>(last_scan_duration), stats.max);
+    ASSERT_LE(stats.min, stats.p99);
+    ASSERT_LE(stats.p50, stats.p99);
+    ASSERT_LE(stats.p99, stats.max);
 }
 
 TEST_F(KeyValueFileStoreScanTest, TestSplitAndSetKeyValueFilter) {

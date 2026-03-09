@@ -1,5 +1,5 @@
 /*
- * Copyright 2024-present Alibaba Inc.
+ * Copyright 2026-present Alibaba Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -133,9 +133,9 @@ const std::vector<double>& HistogramImpl::BucketLimits() {
         v.push_back(2);
 
         double bucket_val = v.back();
-        const double max_u64 = static_cast<double>(std::numeric_limits<uint64_t>::max());
+        const auto max_u64 = static_cast<double>(std::numeric_limits<uint64_t>::max());
         while ((bucket_val = 1.5 * bucket_val) <= max_u64) {
-            uint64_t rounded = static_cast<uint64_t>(bucket_val);
+            auto rounded = static_cast<uint64_t>(bucket_val);
             // Keep two most significant digits (e.g., 172 -> 170).
             uint64_t pow_of_ten = 1;
             while (rounded / 10 > 10) {
@@ -172,7 +172,7 @@ double HistogramImpl::EstimatePercentile(const Snapshot& s, double p) {
         return s.max;
     }
     const auto& limits = BucketLimits();
-    const uint64_t rank = static_cast<uint64_t>(std::ceil(p * static_cast<double>(s.count)));
+    const auto rank = static_cast<uint64_t>(std::ceil(p * static_cast<double>(s.count)));
     uint64_t cum = 0;
     for (size_t i = 0; i < s.bucket_counts.size(); ++i) {
         uint64_t bcnt = s.bucket_counts[i];
@@ -209,7 +209,7 @@ double HistogramImpl::EstimateStddev(const Snapshot& s) {
     if (s.count == 0) {
         return 0;
     }
-    const double n = static_cast<double>(s.count);
+    const auto n = static_cast<double>(s.count);
     const double mean = s.sum / n;
     const double ex2 = s.sum_squares / n;
     const double var = std::max(0.0, ex2 - mean * mean);

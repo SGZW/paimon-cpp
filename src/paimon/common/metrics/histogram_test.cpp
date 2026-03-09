@@ -1,5 +1,5 @@
 /*
- * Copyright 2024-present Alibaba Inc.
+ * Copyright 2026-present Alibaba Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -131,6 +131,60 @@ TEST(HistogramImplTest, TestMergeMatchesSingleHistogram) {
     EXPECT_DOUBLE_EQ(merged.p95, single.p95);
     EXPECT_DOUBLE_EQ(merged.p99, single.p99);
     EXPECT_DOUBLE_EQ(merged.p999, single.p999);
+}
+
+TEST(HistogramImplTest, TestCloneConsistencyAndIndependence) {
+    HistogramImpl h;
+    // Include a mix of values across buckets; NaN should be ignored.
+    const std::vector<double> values = {1,   2,   3,  10,
+                                        100, 0.5, -5, std::numeric_limits<double>::quiet_NaN()};
+    for (double v : values) {
+        h.Add(v);
+    }
+
+    auto cloned_base = h.Clone();
+    auto cloned = std::dynamic_pointer_cast<HistogramImpl>(cloned_base);
+    ASSERT_TRUE(cloned != nullptr);
+
+    // Capture original state after Clone() for easier post-mortem inspection.
+    // Clone() should not mutate the source.
+    const auto after_snapshot = h.GetSnapshot();
+    const auto after_stats = h.GetStats();
+
+    const auto cloned_snapshot = cloned->GetSnapshot();
+    EXPECT_EQ(cloned_snapshot.count, after_snapshot.count);
+    EXPECT_DOUBLE_EQ(cloned_snapshot.sum, after_snapshot.sum);
+    EXPECT_DOUBLE_EQ(cloned_snapshot.sum_squares, after_snapshot.sum_squares);
+    EXPECT_DOUBLE_EQ(cloned_snapshot.min, after_snapshot.min);
+    EXPECT_DOUBLE_EQ(cloned_snapshot.max, after_snapshot.max);
+    std::cerr << "cloned_snapshot.bucket_counts: " << cloned_snapshot.bucket_counts.size()
+              << std::endl;
+    std::cerr << "after_snapshot.bucket_counts: " << after_snapshot.bucket_counts.size()
+              << std::endl;
+    EXPECT_EQ(cloned_snapshot.bucket_counts, after_snapshot.bucket_counts);
+
+    const auto cloned_stats = cloned->GetStats();
+    EXPECT_EQ(cloned_stats.count, after_stats.count);
+    EXPECT_DOUBLE_EQ(cloned_stats.sum, after_stats.sum);
+    EXPECT_DOUBLE_EQ(cloned_stats.min, after_stats.min);
+    EXPECT_DOUBLE_EQ(cloned_stats.max, after_stats.max);
+    EXPECT_DOUBLE_EQ(cloned_stats.average, after_stats.average);
+    EXPECT_DOUBLE_EQ(cloned_stats.stddev, after_stats.stddev);
+    EXPECT_DOUBLE_EQ(cloned_stats.p50, after_stats.p50);
+    EXPECT_DOUBLE_EQ(cloned_stats.p90, after_stats.p90);
+    EXPECT_DOUBLE_EQ(cloned_stats.p95, after_stats.p95);
+    EXPECT_DOUBLE_EQ(cloned_stats.p99, after_stats.p99);
+    EXPECT_DOUBLE_EQ(cloned_stats.p999, after_stats.p999);
+
+    // Mutating original should not affect cloned.
+    h.Add(42);
+    EXPECT_EQ(cloned->GetSnapshot().count, after_snapshot.count);
+    EXPECT_EQ(h.GetSnapshot().count, after_snapshot.count + 1);
+
+    // Mutating cloned should not affect original.
+    cloned->Add(84);
+    EXPECT_EQ(cloned->GetSnapshot().count, after_snapshot.count + 1);
+    EXPECT_EQ(h.GetSnapshot().count, after_snapshot.count + 1);
 }
 
 TEST(MetricsImplHistogramTest, TestMergeAndOverwrite) {
