@@ -219,9 +219,9 @@ void HistogramWindowingImpl::Merge(const Histogram& other) {
         {
             std::lock_guard<std::mutex> guard(other_w->mu_);
             other_only.reserve(other_w->histograms_.size());
-            for (size_t i = 0; i < other_w->histograms_.size(); ++i) {
-                if (other_w->histograms_[i]) {
-                    other_only.push_back(other_w->histograms_[i]);
+            for (const auto& histogram : other_w->histograms_) {
+                if (histogram) {
+                    other_only.push_back(histogram);
                 }
             }
         }
@@ -291,10 +291,10 @@ std::shared_ptr<Histogram> HistogramWindowingImpl::Clone() const {
     cloned->current_index_ = current_index_;
     cloned->window_start_micros_ = window_start_micros_;
     cloned->histograms_.assign(num_windows_, nullptr);
-    for (size_t i = 0; i < histograms_.size(); ++i) {
-        if (histograms_[i]) {
-            cloned->histograms_[i] =
-                std::dynamic_pointer_cast<HistogramImpl>(histograms_[i]->Clone());
+    for (size_t i = 0; i < histograms_.size() && i < cloned->histograms_.size(); ++i) {
+        const auto& histogram = histograms_[i];
+        if (histogram) {
+            cloned->histograms_[i] = std::dynamic_pointer_cast<HistogramImpl>(histogram->Clone());
         }
     }
     return cloned;

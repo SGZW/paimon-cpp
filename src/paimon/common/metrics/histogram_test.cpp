@@ -61,7 +61,7 @@ TEST(HistogramImplTest, TestLargeDatasetExactMoments) {
     double maxv = -std::numeric_limits<double>::infinity();
 
     for (int i = 0; i < n; ++i) {
-        const double v = static_cast<double>(dist(rng));
+        const auto v = static_cast<double>(dist(rng));
         h.Add(v);
         sum += v;
         sum_squares += v * v;
@@ -157,10 +157,6 @@ TEST(HistogramImplTest, TestCloneConsistencyAndIndependence) {
     EXPECT_DOUBLE_EQ(cloned_snapshot.sum_squares, after_snapshot.sum_squares);
     EXPECT_DOUBLE_EQ(cloned_snapshot.min, after_snapshot.min);
     EXPECT_DOUBLE_EQ(cloned_snapshot.max, after_snapshot.max);
-    std::cerr << "cloned_snapshot.bucket_counts: " << cloned_snapshot.bucket_counts.size()
-              << std::endl;
-    std::cerr << "after_snapshot.bucket_counts: " << after_snapshot.bucket_counts.size()
-              << std::endl;
     EXPECT_EQ(cloned_snapshot.bucket_counts, after_snapshot.bucket_counts);
 
     const auto cloned_stats = cloned->GetStats();
