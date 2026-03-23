@@ -1,4 +1,4 @@
-# Copyright 2024-present Alibaba Inc.
+# Copyright 2026-present Alibaba Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -41,7 +41,10 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc-8 g++-8 cmake ninja-build git git-lfs tar curl tzdata zip unzip pkg-config
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc-8 g++-8 ninja-build git git-lfs tar curl tzdata zip unzip pkg-config
+          curl -L -O https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.tar.gz
+          tar -zxvf cmake-3.28.3-linux-x86_64.tar.gz -C /usr/local --strip-components=1
+          rm cmake-3.28.3-linux-x86_64.tar.gz
       - name: Checkout paimon-cpp
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
