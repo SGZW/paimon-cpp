@@ -122,7 +122,7 @@ boolean flags to ``cmake``.
 * ``-DPAIMON_ENABLE_LANCE=ON``: Paimon integration with Lance
 * ``-DPAIMON_ENABLE_AVRO=ON``: Apache Avro libraries and Paimon integration
 * ``-DPAIMON_ENABLE_JINDO=ON``: Support for Alibaba Jindo filesystems
-* ``-DPAIMON_ENABLE_LUMINA=ON``: Support for Lumina vector index
+* ``-DPAIMON_ENABLE_LUMINA=ON``: Support for Lumina vector index, lumina is only supported on gcc9 or higher.
 
 Optional Targets
 ~~~~~~~~~~~~~~~~
