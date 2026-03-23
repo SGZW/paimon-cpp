@@ -41,7 +41,7 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc-8 g++-8 cmake ninja-build git git-lfs tar curl tzdata
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc-8 g++-8 cmake ninja-build git git-lfs tar curl tzdata zip unzip pkg-config
       - name: Checkout paimon-cpp
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
