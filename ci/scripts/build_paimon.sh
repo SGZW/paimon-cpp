@@ -29,10 +29,10 @@ ENABLE_LUMINA="ON"
 ENABLE_LANCE="ON"
 if [[ "${CC:-}" == *"gcc-8"* ]] || [[ "${CXX:-}" == *"g++-8"* ]]; then
     ENABLE_LUMINA="OFF" # Lumina is only supported on GCC 9 or higher.
-    ENABLE_LANCE="OFF" 
-    # Lance's prebuilt binaries can only be compiled on Ubuntu 22.04 and above 
-    # which requires a higher version of glibc, 
-    # but Ubuntu 22.04 and above no longer ships with gcc-8 by default. 
+    ENABLE_LANCE="OFF"
+    # Lance's prebuilt binaries can only be compiled on Ubuntu 22.04 and above
+    # which requires a higher version of glibc,
+    # but Ubuntu 22.04 and above no longer ships with gcc-8 by default.
     # Consider supporting Lance from source compilation in the future
 fi
 
