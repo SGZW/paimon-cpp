@@ -35,6 +35,7 @@
 #include "paimon/common/table/special_fields.h"
 #include "paimon/common/types/data_field.h"
 #include "paimon/common/utils/scope_guard.h"
+#include "paimon/core/compact/noop_compact_manager.h"
 #include "paimon/core/io/compact_increment.h"
 #include "paimon/core/io/data_file_path_factory.h"
 #include "paimon/core/io/data_increment.h"
@@ -73,9 +74,9 @@ class MergeTreeWriterTest : public ::testing::Test {
         value_schema_ = DataField::ConvertDataFieldsToArrowSchema(value_fields_);
         value_type_ = DataField::ConvertDataFieldsToArrowStructType(value_fields_);
         primary_keys_ = {"f0"};
-        ASSERT_OK_AND_ASSIGN(key_comparator_, FieldsComparator::Create({value_fields_[0]},
-                                                                       /*is_ascending_order=*/true,
-                                                                       /*use_view=*/true));
+        ASSERT_OK_AND_ASSIGN(key_comparator_,
+                             FieldsComparator::Create({value_fields_[0]},
+                                                      /*is_ascending_order=*/true));
         std::vector<DataField> write_fields = {SpecialFields::SequenceNumber(),
                                                SpecialFields::ValueKind()};
         write_fields.insert(write_fields.end(), value_fields_.begin(), value_fields_.end());
@@ -83,6 +84,7 @@ class MergeTreeWriterTest : public ::testing::Test {
 
         auto mfunc = std::make_unique<DeduplicateMergeFunction>(/*ignore_delete=*/false);
         merge_function_wrapper_ = std::make_shared<ReducerMergeFunctionWrapper>(std::move(mfunc));
+        noop_compact_manager_ = std::make_shared<NoopCompactManager>();
     }
     void TearDown() override {}
 
@@ -121,6 +123,7 @@ class MergeTreeWriterTest : public ::testing::Test {
     std::shared_ptr<arrow::DataType> write_type_;
     std::shared_ptr<FieldsComparator> key_comparator_;
     std::shared_ptr<MergeFunctionWrapper<KeyValue>> merge_function_wrapper_;
+    std::shared_ptr<NoopCompactManager> noop_compact_manager_;
 };
 
 TEST_F(MergeTreeWriterTest, TestSimple) {
@@ -136,7 +139,7 @@ TEST_F(MergeTreeWriterTest, TestSimple) {
     auto merge_writer = std::make_shared<MergeTreeWriter>(
         /*last_sequence_number=*/-1, primary_keys_, path_factory, key_comparator_,
         /*user_defined_seq_comparator=*/nullptr, merge_function_wrapper_, /*schema_id=*/1,
-        value_schema_, options, pool_);
+        value_schema_, options, noop_compact_manager_, pool_);
 
     // write batch
     std::shared_ptr<arrow::Array> array1 =
@@ -208,7 +211,7 @@ TEST_F(MergeTreeWriterTest, TestWriteMultiBatch) {
     auto merge_writer = std::make_shared<MergeTreeWriter>(
         /*last_sequence_number=*/9, primary_keys_, path_factory, key_comparator_,
         /*user_defined_seq_comparator=*/nullptr, merge_function_wrapper_, /*schema_id=*/0,
-        value_schema_, options, pool_);
+        value_schema_, options, noop_compact_manager_, pool_);
     // batch1
     std::shared_ptr<arrow::Array> array1 =
         arrow::ipc::internal::json::ArrayFromJSON(value_type_, R"([
@@ -290,13 +293,12 @@ TEST_F(MergeTreeWriterTest, TestWriteWithDeleteRow) {
 
     ASSERT_OK_AND_ASSIGN(std::shared_ptr<FieldsComparator> user_defined_seq_comparator,
                          FieldsComparator::Create({value_fields_[1]},
-                                                  /*is_ascending_order=*/true,
-                                                  /*use_view=*/false));
+                                                  /*is_ascending_order=*/true));
     assert(user_defined_seq_comparator);
     auto merge_writer = std::make_shared<MergeTreeWriter>(
         /*last_sequence_number=*/9, primary_keys_, path_factory, key_comparator_,
         user_defined_seq_comparator, merge_function_wrapper_, /*schema_id=*/0, value_schema_,
-        options, pool_);
+        options, noop_compact_manager_, pool_);
     // batch1
     std::shared_ptr<arrow::Array> array1 =
         arrow::ipc::internal::json::ArrayFromJSON(value_type_, R"([
@@ -372,7 +374,7 @@ TEST_F(MergeTreeWriterTest, TestMultiplePrepareCommit) {
     auto merge_writer = std::make_shared<MergeTreeWriter>(
         /*last_sequence_number=*/9, primary_keys_, path_factory, key_comparator_,
         /*user_defined_seq_comparator=*/nullptr, merge_function_wrapper_, /*schema_id=*/0,
-        value_schema_, options, pool_);
+        value_schema_, options, noop_compact_manager_, pool_);
     // batch1
     std::shared_ptr<arrow::Array> array1 =
         arrow::ipc::internal::json::ArrayFromJSON(value_type_, R"([
@@ -508,7 +510,7 @@ TEST_F(MergeTreeWriterTest, TestPrepareCommitForEmptyData) {
     auto merge_writer = std::make_shared<MergeTreeWriter>(
         /*last_sequence_number=*/-1, primary_keys_, path_factory, key_comparator_,
         /*user_defined_seq_comparator=*/nullptr, merge_function_wrapper_, /*schema_id=*/0,
-        value_schema_, options, pool_);
+        value_schema_, options, noop_compact_manager_, pool_);
 
     // prepare commit, without write
     ASSERT_OK_AND_ASSIGN(CommitIncrement commit_increment,
@@ -548,7 +550,7 @@ TEST_F(MergeTreeWriterTest, TestCloseBeforePrepareCommit) {
     auto merge_writer = std::make_shared<MergeTreeWriter>(
         /*last_sequence_number=*/-1, primary_keys_, path_factory, key_comparator_,
         /*user_defined_seq_comparator=*/nullptr, merge_function_wrapper_, /*schema_id=*/0,
-        value_schema_, options, pool_);
+        value_schema_, options, noop_compact_manager_, pool_);
 
     // write batch
     std::shared_ptr<arrow::Array> array1 =
@@ -577,7 +579,7 @@ TEST_F(MergeTreeWriterTest, TestAutoFlush) {
     auto merge_writer = std::make_shared<MergeTreeWriter>(
         /*last_sequence_number=*/9, primary_keys_, path_factory, key_comparator_,
         /*user_defined_seq_comparator=*/nullptr, merge_function_wrapper_, /*schema_id=*/0,
-        value_schema_, options, pool_);
+        value_schema_, options, noop_compact_manager_, pool_);
     // batch1
     std::shared_ptr<arrow::Array> array1 =
         arrow::ipc::internal::json::ArrayFromJSON(value_type_, R"([
@@ -699,7 +701,7 @@ TEST_F(MergeTreeWriterTest, TestIOException) {
         auto merge_writer = std::make_shared<MergeTreeWriter>(
             /*last_sequence_number=*/-1, primary_keys_, path_factory, key_comparator_,
             /*user_defined_seq_comparator=*/nullptr, merge_function_wrapper_, /*schema_id=*/0,
-            value_schema_, options, pool_);
+            value_schema_, options, noop_compact_manager_, pool_);
 
         // write batch
         std::shared_ptr<arrow::Array> array =
@@ -810,7 +812,7 @@ TEST_F(MergeTreeWriterTest, TestBulkData) {
     auto merge_writer = std::make_shared<MergeTreeWriter>(
         /*last_sequence_number=*/-1, primary_keys_, path_factory, key_comparator_,
         /*user_defined_seq_comparator=*/nullptr, merge_function_wrapper_, /*schema_id=*/0,
-        value_schema_, options, pool_);
+        value_schema_, options, noop_compact_manager_, pool_);
     // multi batch
     size_t batch_size = 500;
     for (size_t i = 0; i < batch_size; ++i) {
