@@ -36,9 +36,9 @@
 namespace paimon::test {
 
 // ---------------------------------------------------------------------------
-// Test data directory (relative to project root)
+// Test data directory (relative to PAIMON_TEST_DATA)
 // ---------------------------------------------------------------------------
-static constexpr char kTestDataDir[] = "test/test_data/global_index/btree/btree_compatibility_data";
+static constexpr char kCompatibilityDataDir[] = "global_index/btree/btree_compatibility_data";
 
 // ---------------------------------------------------------------------------
 // CSV record parsed from the Java-generated CSV files
@@ -143,14 +143,12 @@ class BTreeCompatibilityTest : public ::testing::Test {
         test_dir_ = UniqueTestDirectory::Create("local");
         fs_ = test_dir_->GetFileSystem();
 
-        // Resolve the absolute path to test data
-        // The test data is at project_root/test/test_data/...
-        // We need to find the project root. Use the current working directory.
-        char cwd[4096];
-        if (getcwd(cwd, sizeof(cwd)) != nullptr) {
-            project_root_ = std::string(cwd);
+        auto base_data_dir = GetDataDir();
+        if (!base_data_dir.empty() && base_data_dir.back() == '/') {
+            data_dir_ = base_data_dir + kCompatibilityDataDir;
+        } else {
+            data_dir_ = base_data_dir + "/" + kCompatibilityDataDir;
         }
-        data_dir_ = project_root_ + "/" + kTestDataDir;
     }
 
     // Create a BTreeGlobalIndexReader from Java-generated .bin and .bin.meta files
